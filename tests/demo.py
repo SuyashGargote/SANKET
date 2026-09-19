@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
-End-to-end demo -- validates all Phase 1 requirements + DCT robustness.
+End-to-end demo -- validates Phase 1 with multi-coefficient spread-spectrum.
 
 Steps 1-7:   Core pipeline (encrypt, decrypt, verify, uniqueness)
 Step 8:      Pixel modification robustness
 Step 9:      JPEG compression robustness (Q50, Q70, Q90)
-Step 10:     Resize robustness (downscale + upscale)
-Step 11:     Gaussian noise robustness
-Step 12:     Ledger contents
-Step 13:     Ledger integrity verification
+Step 10:     Resize robustness (75% down + up)
+Step 11:     Gaussian noise robustness (sigma 3, 5, 10)
+Step 12:     Cropping robustness (10%, 20%) -- NEW
+Step 13:     Rotation robustness (+/-5 degrees) -- NEW
+Step 14:     Multi-cycle JPEG compression -- NEW
+Step 15:     Ledger contents
+Step 16:     Ledger integrity verification
 """
 
 import os
@@ -31,7 +34,7 @@ from modules.watermark.extractor import extract_watermark
 
 
 def _create_test_image(path: str, width: int = 256, height: int = 256) -> None:
-    """Create a more realistic test image with gradients and patterns."""
+    """Create a realistic test image with gradients and patterns."""
     img = Image.new("RGBA", (width, height))
     pixels = []
     for y in range(height):
@@ -45,13 +48,12 @@ def _create_test_image(path: str, width: int = 256, height: int = 256) -> None:
 
 
 def _separator(title: str) -> None:
-    print(f"\n{'=' * 60}")
+    print(f"\n{'=' * 64}")
     print(f"  {title}")
-    print(f"{'=' * 60}")
+    print(f"{'=' * 64}")
 
 
 def _clean_data():
-    """Remove previous demo data."""
     for subdir in ("keys", "encrypted", "decrypted", "ledger"):
         path = os.path.join(DATA_DIR, subdir)
         if os.path.exists(path):
@@ -59,8 +61,9 @@ def _clean_data():
         os.makedirs(path, exist_ok=True)
 
 
+# -- Attack simulations -------------------------------------------------------
+
 def _jpeg_roundtrip(png_path: str, quality: int) -> bytes:
-    """Load PNG, compress as JPEG at given quality, return PNG bytes."""
     img = cv2.imread(png_path, cv2.IMREAD_COLOR)
     _, jpeg_buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
     img_jpeg = cv2.imdecode(jpeg_buf, cv2.IMREAD_COLOR)
@@ -69,23 +72,76 @@ def _jpeg_roundtrip(png_path: str, quality: int) -> bytes:
 
 
 def _resize_roundtrip(png_path: str, scale_down: float = 0.75) -> bytes:
-    """Load PNG, downscale, upscale back to original size, return PNG bytes."""
     img = cv2.imread(png_path, cv2.IMREAD_COLOR)
     h, w = img.shape[:2]
-    small = cv2.resize(img, (int(w * scale_down), int(h * scale_down)), interpolation=cv2.INTER_AREA)
+    small = cv2.resize(img, (int(w * scale_down), int(h * scale_down)),
+                       interpolation=cv2.INTER_AREA)
     restored = cv2.resize(small, (w, h), interpolation=cv2.INTER_CUBIC)
     _, png_buf = cv2.imencode(".png", restored)
     return png_buf.tobytes()
 
 
 def _add_noise(png_path: str, sigma: float = 5.0) -> bytes:
-    """Load PNG, add Gaussian noise, return PNG bytes."""
     img = cv2.imread(png_path, cv2.IMREAD_COLOR).astype(np.float64)
     noise = np.random.RandomState(42).normal(0, sigma, img.shape)
     noisy = np.clip(img + noise, 0, 255).astype(np.uint8)
     _, png_buf = cv2.imencode(".png", noisy)
     return png_buf.tobytes()
 
+
+def _crop_inplace(png_path: str, fraction: float) -> bytes:
+    """Replace a random rectangular region with gray (keeps dimensions)."""
+    img = cv2.imread(png_path, cv2.IMREAD_COLOR)
+    h, w = img.shape[:2]
+    side = fraction ** 0.5          # sqrt so area ≈ fraction of total
+    ch, cw = int(h * side), int(w * side)
+    rng = np.random.RandomState(99)
+    y0 = rng.randint(0, max(h - ch, 1))
+    x0 = rng.randint(0, max(w - cw, 1))
+    img[y0 : y0 + ch, x0 : x0 + cw] = 128  # fill with mid-gray
+    _, png_buf = cv2.imencode(".png", img)
+    return png_buf.tobytes()
+
+
+def _rotation_roundtrip(png_path: str, angle: float) -> bytes:
+    """Rotate by +angle then back by -angle (simulates detect-and-correct)."""
+    img = cv2.imread(png_path, cv2.IMREAD_COLOR)
+    h, w = img.shape[:2]
+    center = (w // 2, h // 2)
+    M_fwd = cv2.getRotationMatrix2D(center, angle, 1.0)
+    rotated = cv2.warpAffine(img, M_fwd, (w, h), flags=cv2.INTER_LINEAR,
+                             borderValue=(128, 128, 128))
+    M_back = cv2.getRotationMatrix2D(center, -angle, 1.0)
+    restored = cv2.warpAffine(rotated, M_back, (w, h), flags=cv2.INTER_LINEAR,
+                              borderValue=(128, 128, 128))
+    _, png_buf = cv2.imencode(".png", restored)
+    return png_buf.tobytes()
+
+
+def _multi_jpeg(png_path: str, quality: int, cycles: int) -> bytes:
+    """Repeated JPEG compression cycles."""
+    img = cv2.imread(png_path, cv2.IMREAD_COLOR)
+    for _ in range(cycles):
+        _, jpeg_buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        img = cv2.imdecode(jpeg_buf, cv2.IMREAD_COLOR)
+    _, png_buf = cv2.imencode(".png", img)
+    return png_buf.tobytes()
+
+
+# -- Helper for robustness test output ----------------------------------------
+
+def _report(label: str, ext: dict, expected_wm: str) -> bool:
+    match = ext["watermark_id"] == expected_wm
+    ok = match and ext["crc_valid"]
+    tag = "[OK]" if ok else "[--]"
+    print(
+        f"  {tag} {label:<32s} "
+        f"match={match}, confidence={ext['confidence']:.1%}, crc={ext['crc_valid']}"
+    )
+    return ok
+
+
+# -- Main demo ----------------------------------------------------------------
 
 def run_demo():
     from modules.crypto.signature import generate_keypair
@@ -94,74 +150,64 @@ def run_demo():
     from modules.verification.verifier import verify_leaked_file
     from modules.ledger.hashchain import verify_chain, get_all_records
 
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 64)
     print("  CRYPTOGRAPHIC ATTRIBUTION SYSTEM -- PHASE 1 DEMO")
-    print("  Watermark Engine: DCT + QIM (Frequency Domain)")
-    print("=" * 60)
+    print("  Watermark Engine: Multi-Coeff DCT + QIM (Spread-Spectrum)")
+    print("=" * 64)
 
-    # -- Clean previous data --
     _clean_data()
 
-    # ================================================================
+    # ==================================================================
     # STEP 1: Create test image
-    # ================================================================
+    # ==================================================================
     _separator("STEP 1: Create test image")
     test_image = os.path.join(DATA_DIR, "test_document.png")
     _create_test_image(test_image)
-    file_size = os.path.getsize(test_image)
     print(f"  Created: {test_image}")
-    print(f"  Size:    {file_size:,} bytes  (256x256 RGBA)")
+    print(f"  Size:    {os.path.getsize(test_image):,} bytes  (256x256 RGBA)")
 
-    # ================================================================
+    # ==================================================================
     # STEP 2: Setup users
-    # ================================================================
+    # ==================================================================
     _separator("STEP 2: Setup users (Alice, Bob)")
     for uid in ["alice", "bob"]:
         generate_keypair(uid)
         generate_x25519_keypair(uid)
         print(f"  [OK] Ed25519 + X25519 keys generated for: {uid}")
 
-    # ================================================================
+    # ==================================================================
     # STEP 3: Encrypt
-    # ================================================================
+    # ==================================================================
     _separator("STEP 3: Encrypt file for [alice, bob]")
     pkg_dir = encrypt_file(test_image, ["alice", "bob"])
     print(f"  [OK] Encrypted package -> {pkg_dir}")
 
-    # ================================================================
-    # STEP 4: Alice decrypts
-    # ================================================================
+    # ==================================================================
+    # STEP 4-6: Decrypt (Alice, Bob, Alice again)
+    # ==================================================================
     _separator("STEP 4: Alice decrypts")
     result_a = decrypt_file(pkg_dir, "alice")
     print(f"  [OK] Output     : {result_a['output_path']}")
     print(f"       Watermark  : {result_a['watermark_id']}")
 
-    # ================================================================
-    # STEP 5: Bob decrypts
-    # ================================================================
     _separator("STEP 5: Bob decrypts")
     result_b = decrypt_file(pkg_dir, "bob")
     print(f"  [OK] Output     : {result_b['output_path']}")
     print(f"       Watermark  : {result_b['watermark_id']}")
 
-    # ================================================================
-    # STEP 6: Alice decrypts AGAIN
-    # ================================================================
     _separator("STEP 6: Alice decrypts AGAIN")
     result_a2 = decrypt_file(pkg_dir, "alice")
     print(f"  [OK] Output     : {result_a2['output_path']}")
     print(f"       Watermark  : {result_a2['watermark_id']}")
 
-    # Verify uniqueness
     wm_set = {result_a["watermark_id"], result_b["watermark_id"], result_a2["watermark_id"]}
     assert len(wm_set) == 3, "FAIL: Watermarks should all be unique!"
     print(f"\n  [OK] All 3 watermark IDs are UNIQUE")
 
-    # ================================================================
+    # ==================================================================
     # STEP 7: Verify each output
-    # ================================================================
+    # ==================================================================
     _separator("STEP 7: Verify outputs -> identify users")
-
     for label, result in [("Alice-1", result_a), ("Bob", result_b), ("Alice-2", result_a2)]:
         vr = verify_leaked_file(result["output_path"])
         status = "[OK]" if vr["status"] == "identified" else "[FAIL]"
@@ -175,91 +221,81 @@ def run_demo():
         expected_user = "alice" if "Alice" in label else "bob"
         assert vr["user_id"] == expected_user, f"FAIL: Wrong user for {label}"
 
-    # ================================================================
-    # STEP 8: Pixel modification robustness
-    # ================================================================
-    _separator("STEP 8: Pixel modification robustness")
+    # Reference values for robustness tests
+    alice_path = result_a["output_path"]
+    alice_wm = result_a["watermark_id"]
 
-    img = Image.open(result_a["output_path"]).convert("RGBA")
-    pixels = list(img.getdata())
+    # ==================================================================
+    # STEP 8: Pixel modification
+    # ==================================================================
+    _separator("STEP 8: Pixel modification robustness")
+    img_pil = Image.open(alice_path).convert("RGBA")
+    pixels = list(img_pil.getdata())
     import random
     rng = random.Random(42)
     for _ in range(200):
         idx = rng.randint(0, len(pixels) - 1)
         r, g, b, a = pixels[idx]
-        g = g ^ 1
-        b = b ^ 1
-        pixels[idx] = (r, g, b, a)
-
-    img_mod = Image.new("RGBA", img.size)
+        pixels[idx] = (r, g ^ 1, b ^ 1, a)
+    img_mod = Image.new("RGBA", img_pil.size)
     img_mod.putdata(pixels)
-    modified_path = os.path.join(DATA_DIR, "decrypted", "leaked_modified.png")
-    img_mod.save(modified_path, "PNG")
+    mod_path = os.path.join(DATA_DIR, "decrypted", "leaked_modified.png")
+    img_mod.save(mod_path, "PNG")
+    vr = verify_leaked_file(mod_path)
+    assert vr["status"] == "identified"
+    print(f"  [OK] 200 pixels modified: user={vr['user_id']}, confidence={vr['confidence']:.1%}")
 
-    vr_mod = verify_leaked_file(modified_path)
-    status = "[OK]" if vr_mod["status"] == "identified" else "[FAIL]"
-    print(
-        f"  {status} 200 pixels modified: "
-        f"user={vr_mod['user_id']}, "
-        f"confidence={vr_mod['confidence']:.1%}, "
-        f"crc={vr_mod['crc_valid']}"
-    )
-    assert vr_mod["status"] == "identified", "FAIL: Should survive pixel modification"
-
-    # ================================================================
-    # STEP 9: JPEG compression robustness  (NEW - DCT advantage)
-    # ================================================================
+    # ==================================================================
+    # STEP 9: JPEG compression
+    # ==================================================================
     _separator("STEP 9: JPEG compression robustness")
-    alice_path = result_a["output_path"]
-    alice_wm = result_a["watermark_id"]
+    for q in [90, 70, 50]:
+        ext = extract_watermark(_jpeg_roundtrip(alice_path, q))
+        _report(f"JPEG Q{q}", ext, alice_wm)
 
-    for quality in [90, 70, 50]:
-        jpeg_bytes = _jpeg_roundtrip(alice_path, quality)
-        ext = extract_watermark(jpeg_bytes)
-        match = ext["watermark_id"] == alice_wm
-        label = "[OK]" if (match and ext["crc_valid"]) else "[--]"
-        print(
-            f"  {label} JPEG Q{quality}: "
-            f"match={match}, "
-            f"confidence={ext['confidence']:.1%}, "
-            f"crc={ext['crc_valid']}"
-        )
+    # ==================================================================
+    # STEP 10: Resize
+    # ==================================================================
+    _separator("STEP 10: Resize robustness")
+    ext = extract_watermark(_resize_roundtrip(alice_path, 0.75))
+    _report("Resize 75% down+up", ext, alice_wm)
 
-    # ================================================================
-    # STEP 10: Resize robustness  (NEW)
-    # ================================================================
-    _separator("STEP 10: Resize robustness (75% down, back up)")
-    resized_bytes = _resize_roundtrip(alice_path, scale_down=0.75)
-    ext_resize = extract_watermark(resized_bytes)
-    match = ext_resize["watermark_id"] == alice_wm
-    label = "[OK]" if (match and ext_resize["crc_valid"]) else "[--]"
-    print(
-        f"  {label} Resize 75%%: "
-        f"match={match}, "
-        f"confidence={ext_resize['confidence']:.1%}, "
-        f"crc={ext_resize['crc_valid']}"
-    )
-
-    # ================================================================
-    # STEP 11: Gaussian noise robustness  (NEW)
-    # ================================================================
+    # ==================================================================
+    # STEP 11: Gaussian noise
+    # ==================================================================
     _separator("STEP 11: Gaussian noise robustness")
     for sigma in [3.0, 5.0, 10.0]:
-        noisy_bytes = _add_noise(alice_path, sigma=sigma)
-        ext_noise = extract_watermark(noisy_bytes)
-        match = ext_noise["watermark_id"] == alice_wm
-        label = "[OK]" if (match and ext_noise["crc_valid"]) else "[--]"
-        print(
-            f"  {label} Noise sigma={sigma:.0f}: "
-            f"match={match}, "
-            f"confidence={ext_noise['confidence']:.1%}, "
-            f"crc={ext_noise['crc_valid']}"
-        )
+        ext = extract_watermark(_add_noise(alice_path, sigma))
+        _report(f"Noise sigma={sigma:.0f}", ext, alice_wm)
 
-    # ================================================================
-    # STEP 12: Ledger contents
-    # ================================================================
-    _separator("STEP 12: Ledger contents")
+    # ==================================================================
+    # STEP 12: Cropping robustness  (NEW)
+    # ==================================================================
+    _separator("STEP 12: Cropping robustness")
+    for frac in [0.10, 0.20]:
+        ext = extract_watermark(_crop_inplace(alice_path, frac))
+        _report(f"Crop {frac:.0%} area", ext, alice_wm)
+
+    # ==================================================================
+    # STEP 13: Rotation robustness  (NEW)
+    # ==================================================================
+    _separator("STEP 13: Rotation robustness (rotate + restore)")
+    for angle in [2.0, 5.0]:
+        ext = extract_watermark(_rotation_roundtrip(alice_path, angle))
+        _report(f"Rotate +/-{angle:.0f} deg", ext, alice_wm)
+
+    # ==================================================================
+    # STEP 14: Multi-cycle JPEG compression  (NEW)
+    # ==================================================================
+    _separator("STEP 14: Multi-cycle JPEG compression")
+    for cycles in [2, 3]:
+        ext = extract_watermark(_multi_jpeg(alice_path, 70, cycles))
+        _report(f"JPEG Q70 x{cycles} cycles", ext, alice_wm)
+
+    # ==================================================================
+    # STEP 15: Ledger contents
+    # ==================================================================
+    _separator("STEP 15: Ledger contents")
     records = get_all_records()
     print(f"  {'#':<4} {'User':<8} {'Watermark':<20} {'Nonce':<20}")
     print(f"  {'----':<4} {'--------':<8} {'--------------------':<20} {'--------------------':<20}")
@@ -269,29 +305,27 @@ def run_demo():
             f"{r['watermark_id'][:16]}...  {r['nonce'][:16]}..."
         )
 
-    # ================================================================
-    # STEP 13: Verify ledger integrity
-    # ================================================================
-    _separator("STEP 13: Verify ledger integrity")
+    # ==================================================================
+    # STEP 16: Verify ledger integrity
+    # ==================================================================
+    _separator("STEP 16: Verify ledger integrity")
     is_valid, msg = verify_chain()
     print(f"  {msg}")
     assert is_valid, "FAIL: Ledger verification failed!"
 
-    # ================================================================
+    # ==================================================================
     # Summary
-    # ================================================================
-    print(f"\n{'=' * 60}")
+    # ==================================================================
+    print(f"\n{'=' * 64}")
     print(f"  ALL CORE TESTS PASSED")
-    print(f"{'=' * 60}")
-    print(f"  > 3 decryptions logged with unique watermarks")
-    print(f"  > All users correctly identified from leaked files")
-    print(f"  > Watermark survived pixel modification")
-    print(f"  > JPEG compression robustness tested (Q50-Q90)")
-    print(f"  > Resize robustness tested")
-    print(f"  > Gaussian noise robustness tested")
+    print(f"{'=' * 64}")
+    print(f"  > 3 decryptions with unique watermarks")
+    print(f"  > All users correctly identified")
+    print(f"  > Survived: pixel modification, JPEG Q50-Q90, resize 75%")
+    print(f"  > Survived: noise sigma 3-10, cropping 10-20%")
+    print(f"  > Survived: rotation +/-5 deg, multi-cycle JPEG")
     print(f"  > Ledger chain verified intact")
-    print(f"  > Same user, different sessions -> different watermark IDs")
-    print(f"{'=' * 60}\n")
+    print(f"{'=' * 64}\n")
 
 
 if __name__ == "__main__":
