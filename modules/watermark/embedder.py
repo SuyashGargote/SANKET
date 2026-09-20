@@ -1,5 +1,6 @@
 """
-Watermark Embedder -- Multi-coefficient DCT + QIM with zone-interleaved spread-spectrum.
+Watermark Embedder -- Multi-coefficient DCT + QIM with zone-interleaved
+spread-spectrum and synchronization template.
 
 Architecture (24 votes per watermark bit):
   - 4 mid-frequency DCT coefficients per block: (2,2), (3,1), (1,3), (2,3)
@@ -7,14 +8,19 @@ Architecture (24 votes per watermark bit):
   - 3x macro-redundancy (watermark repeated 3 times)
   Total: 4 coefficients x 2 zones x 3 copies = 24 votes per bit
 
-Zone-interleaving:
-  Image blocks are divided into 2 spatial zones (top-half / bottom-half).
-  Each spread copy of a bit is placed in a different zone, so a localized
-  crop (even 25% of the image) cannot destroy both copies of any bit.
+Synchronization Template:
+  A deterministic periodic binary pattern is embedded in coefficient (4,2)
+  of EVERY block, using a strong QIM delta (80).  This pattern is:
+  - Independent of watermark_id (always the same)
+  - Periodic with period 4 blocks in both X and Y
+  - Used by the extractor to detect and correct rotation via angle search
+  - Used to identify corrupted blocks (cropped regions)
+
+  Coefficient (4,2) is distinct from all watermark coefficients, so sync
+  and watermark do not interfere.
 
 Adaptive QIM:
-  Delta varies per block based on spatial variance (38-62), preventing
-  overfitting to fixed compression assumptions.
+  Delta varies per block based on spatial variance (38-62).
 """
 
 import hashlib
@@ -30,17 +36,29 @@ from utils.helpers import watermark_to_bits
 EMBED_COEFFICIENTS = [(2, 2), (3, 1), (1, 3), (2, 3)]
 NUM_COEFFS = len(EMBED_COEFFICIENTS)
 
-TARGET_SPREAD = 2       # blocks per bit (zone-interleaved)
+TARGET_SPREAD = 2
 BLOCK_SIZE = 8
 
-# Adaptive QIM
+# Adaptive QIM for watermark
 QIM_DELTA_MIN = 38.0
 QIM_DELTA_MAX = 62.0
 VARIANCE_THRESHOLD = 500.0
 
-# Deterministic seed (v4 = zone-interleaved)
+# Deterministic seed for zone block selection
 _BLOCK_SEED = int(hashlib.sha256(b"dct-zone-seed-v4").hexdigest()[:8], 16)
 
+# -- Synchronization Template Parameters --------------------------------------
+
+SYNC_COEFF = (4, 2)     # Separate from watermark coefficients
+SYNC_DELTA = 80.0        # Strong QIM delta for robust sync
+SYNC_PERIOD = 4          # Pattern repeats every 4 blocks in each axis
+
+# Deterministic 4x4 binary pattern (good autocorrelation at zero offset)
+_sync_rng = np.random.RandomState(54321)
+SYNC_PATTERN = _sync_rng.randint(0, 2, size=(SYNC_PERIOD, SYNC_PERIOD)).tolist()
+
+
+# -- Shared functions ----------------------------------------------------------
 
 def _zone_interleaved_indices(
     payload_len: int,
@@ -50,42 +68,33 @@ def _zone_interleaved_indices(
     spread_factor: int,
 ) -> list[list[int]]:
     """
-    Allocate block indices so that each spread copy of a bit is in a different
-    spatial zone.  Returns a list of `spread_factor` index-lists, each of
-    length `payload_len`.  Zone k contains rows [k*blocks_y//spread_factor ..
-    (k+1)*blocks_y//spread_factor).
+    Allocate block indices so each spread copy is in a different spatial zone.
     """
     rng = np.random.RandomState(_BLOCK_SEED)
-
-    # Build zone membership: zone_blocks[z] = list of block indices in zone z
     zone_blocks: list[list[int]] = [[] for _ in range(spread_factor)]
-    zone_height = blocks_y // spread_factor  # rows per zone
+    zone_height = blocks_y // spread_factor
 
     for bidx in range(total_blocks):
         by = bidx // blocks_x
         zone = min(by // max(zone_height, 1), spread_factor - 1)
         zone_blocks[zone].append(bidx)
 
-    # Shuffle each zone independently
     for z in range(spread_factor):
         arr = np.array(zone_blocks[z])
         rng.shuffle(arr)
         zone_blocks[z] = arr.tolist()
 
-    # Validate capacity
     for z in range(spread_factor):
         if len(zone_blocks[z]) < payload_len:
             raise ValueError(
-                f"Zone {z} has {len(zone_blocks[z])} blocks, need {payload_len}. "
-                f"Image may be too small for zone-interleaved spread."
+                f"Zone {z} has {len(zone_blocks[z])} blocks, need {payload_len}."
             )
 
-    # Take first payload_len blocks from each zone
     return [zone_blocks[z][:payload_len] for z in range(spread_factor)]
 
 
 def _adaptive_delta(block: np.ndarray) -> float:
-    """QIM step based on block variance -- textured blocks get stronger embedding."""
+    """QIM step based on block variance."""
     variance = float(np.var(block))
     scale = min(variance / VARIANCE_THRESHOLD, 1.0)
     return QIM_DELTA_MIN + scale * (QIM_DELTA_MAX - QIM_DELTA_MIN)
@@ -104,11 +113,9 @@ def _qim_embed(coeff: float, bit: int, delta: float) -> float:
 
 
 def _compute_spread_factor(payload_len: int, total_blocks: int, blocks_y: int) -> int:
-    """Pick largest spread factor that fits. Each zone needs payload_len blocks."""
     sf = TARGET_SPREAD
     while sf > 1:
         zone_rows = blocks_y // sf
-        # Rough capacity per zone
         if zone_rows >= 1 and total_blocks // sf >= payload_len:
             break
         sf -= 1
@@ -119,10 +126,11 @@ def _compute_spread_factor(payload_len: int, total_blocks: int, blocks_y: int) -
     return sf
 
 
+# -- Main embedding function ---------------------------------------------------
+
 def embed_watermark(image_bytes: bytes, watermark_hex: str) -> bytes:
     """
-    Embed a watermark into a PNG image using zone-interleaved multi-coefficient
-    DCT + QIM.
+    Embed watermark + synchronization template into a PNG image.
 
     Args:
         image_bytes: Raw PNG file bytes.
@@ -166,13 +174,12 @@ def embed_watermark(image_bytes: bytes, watermark_hex: str) -> bytes:
     single_bits = watermark_to_bits(watermark_hex)
     payload = single_bits * WATERMARK_REDUNDANCY
 
-    # -- Compute spread factor and zone-interleaved indices --
+    # -- Zone-interleaved watermark embedding --
     spread_factor = _compute_spread_factor(len(payload), total_blocks, blocks_y)
     zone_indices = _zone_interleaved_indices(
         len(payload), total_blocks, blocks_x, blocks_y, spread_factor
     )
 
-    # -- Embed each bit across zones x coefficients --
     for bit_idx, bit_val in enumerate(payload):
         for z in range(spread_factor):
             bidx = zone_indices[z][bit_idx]
@@ -186,6 +193,20 @@ def embed_watermark(image_bytes: bytes, watermark_hex: str) -> bytes:
 
             for u, v in EMBED_COEFFICIENTS:
                 dct_block[u, v] = _qim_embed(dct_block[u, v], bit_val, delta)
+
+            y_channel[r0 : r0 + BLOCK_SIZE, c0 : c0 + BLOCK_SIZE] = cv2.idct(dct_block)
+
+    # -- Synchronization template embedding (ALL blocks) --
+    su, sv = SYNC_COEFF
+    for by in range(blocks_y):
+        for bx in range(blocks_x):
+            r0, c0 = by * BLOCK_SIZE, bx * BLOCK_SIZE
+
+            block = y_channel[r0 : r0 + BLOCK_SIZE, c0 : c0 + BLOCK_SIZE].copy()
+            dct_block = cv2.dct(block)
+
+            sync_bit = SYNC_PATTERN[by % SYNC_PERIOD][bx % SYNC_PERIOD]
+            dct_block[su, sv] = _qim_embed(dct_block[su, sv], sync_bit, SYNC_DELTA)
 
             y_channel[r0 : r0 + BLOCK_SIZE, c0 : c0 + BLOCK_SIZE] = cv2.idct(dct_block)
 
