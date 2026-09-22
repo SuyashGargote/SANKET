@@ -57,23 +57,51 @@ def cmd_decrypt(args):
 
 
 def cmd_verify(args):
-    """Verify a leaked file."""
+    """Verify a leaked file with forensic analysis."""
     from modules.verification.verifier import verify_leaked_file
 
     result = verify_leaked_file(args.file)
 
-    print(f"\n  ── Verification Result ──")
-    print(f"    Status       : {result['status'].upper()}")
-    print(f"    Watermark ID : {result['watermark_id'] or 'N/A'}")
-    print(f"    CRC Valid    : {result['crc_valid']}")
-    print(f"    Confidence   : {result['confidence']:.1%}")
-    print(f"    Ledger Valid : {result['ledger_valid']}")
+    print(f"\n  ┌──────────────────────────────────────────────┐")
+    print(f"  │       FORENSIC VERIFICATION REPORT           │")
+    print(f"  └──────────────────────────────────────────────┘")
+
+    print(f"\n  [RESULT]")
+    print(f"    User        : {result.get('user') or 'N/A'}")
+    print(f"    Confidence  : {result['confidence']:.1f}%")
+    print(f"    Verdict     : {result['verdict']}")
+    print(f"    Status      : {result['status'].upper()}")
+
+    print(f"\n  [DETAILS]")
+    print(f"    CRC         : {'OK' if result['crc_valid'] else 'FAILED'}")
+    print(f"    Votes       : {result['vote_ratio']:.1%}")
+    sync_label = "Strong" if result["sync_score"] >= 0.75 else (
+        "Moderate" if result["sync_score"] >= 0.50 else "Weak"
+    )
+    print(f"    Sync        : {sync_label} ({result['sync_score']:.1%})")
+    corr_label = "None" if result["corruption"] < 0.05 else (
+        "Low" if result["corruption"] < 0.15 else (
+            "Moderate" if result["corruption"] < 0.30 else "High"
+        )
+    )
+    print(f"    Corruption  : {corr_label} ({result['corruption']:.1%})")
+    print(f"    Multi-signal: {result['multi_signal_agreement']}/3 agree")
+    print(f"    Tamper      : {'DETECTED' if result['tamper_detected'] else 'None'}")
+
+    if result.get("notes"):
+        print(f"\n  [NOTES]")
+        for note in result["notes"]:
+            print(f"    • {note}")
 
     if result["status"] == "identified":
         print(f"\n  🔍 LEAK SOURCE IDENTIFIED")
-        print(f"    User ID      : {result['user_id']}")
-        print(f"    Timestamp    : {result['record']['timestamp']}")
-        print(f"    Nonce        : {result['record']['nonce']}")
+        print(f"    User ID      : {result['user']}")
+        print(f"    Watermark    : {result['watermark_id']}")
+        if result.get("record"):
+            print(f"    Timestamp    : {result['record']['timestamp']}")
+            print(f"    Nonce        : {result['record']['nonce']}")
+    elif result["status"] == "rejected":
+        print(f"\n  ✗  REJECTED — confidence too low for reliable attribution.")
     elif result["status"] == "watermark_not_found":
         print(f"\n  ⚠  No watermark could be extracted from this file.")
     elif result["status"] == "ledger_miss":

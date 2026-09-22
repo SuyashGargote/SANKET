@@ -187,6 +187,31 @@ def _report(label: str, ext: dict, expected_wm: str) -> bool:
     return ok
 
 
+def _print_forensic(vr: dict) -> None:
+    """Print formatted forensic verification report."""
+    print(f"    User        : {vr.get('user') or 'N/A'}")
+    print(f"    Confidence  : {vr['confidence']:.1f}%")
+    print(f"    Verdict     : {vr['verdict']}")
+    print(f"    CRC         : {'OK' if vr['crc_valid'] else 'FAILED'}")
+    print(f"    Votes       : {vr['vote_ratio']:.1%}")
+    sync_l = "Strong" if vr['sync_score'] >= 0.75 else (
+        "Moderate" if vr['sync_score'] >= 0.50 else "Weak"
+    )
+    print(f"    Sync        : {sync_l} ({vr['sync_score']:.1%})")
+    corr_l = "None" if vr['corruption'] < 0.05 else (
+        "Low" if vr['corruption'] < 0.15 else (
+            "Moderate" if vr['corruption'] < 0.30 else "High"
+        )
+    )
+    print(f"    Corruption  : {corr_l} ({vr['corruption']:.1%})")
+    print(f"    Multi-signal: {vr['multi_signal_agreement']}/3 agree")
+    print(f"    Tamper      : {'DETECTED' if vr['tamper_detected'] else 'None'}")
+    if vr.get('notes'):
+        print(f"    Notes:")
+        for note in vr['notes']:
+            print(f"      \u2022 {note}")
+
+
 # ==============================================================================
 # Main demo
 # ==============================================================================
@@ -251,7 +276,7 @@ def run_demo():
         status = "[OK]" if vr["status"] == "identified" else "[FAIL]"
         print(
             f"  {status} {label:>8}: user={vr['user_id']}, "
-            f"confidence={vr['confidence']:.1%}, crc={vr['crc_valid']}"
+            f"confidence={vr['confidence']:.1f}%, crc={vr['crc_valid']}"
         )
         assert vr["status"] == "identified"
         expected_user = "alice" if "Alice" in label else "bob"
@@ -276,7 +301,7 @@ def run_demo():
     img_mod.save(mod_path, "PNG")
     vr = verify_leaked_file(mod_path)
     assert vr["status"] == "identified"
-    print(f"  [OK] 200 pixels modified: user={vr['user_id']}, conf={vr['confidence']:.1%}")
+    print(f"  [OK] 200 pixels modified: user={vr['user_id']}, conf={vr['confidence']:.1f}%")
 
     # ==================================================================
     _separator("STEP 9: JPEG compression robustness")
@@ -345,14 +370,86 @@ def run_demo():
     assert is_valid, "FAIL: Ledger verification failed!"
 
     # ==================================================================
+    _separator("STEP 18: False positive rejection (non-watermarked images)")
+
+    # Random noise image
+    noise_img = np.random.RandomState(123).randint(
+        0, 256, (256, 256, 3), dtype=np.uint8
+    )
+    noise_path = os.path.join(DATA_DIR, "decrypted", "random_noise.png")
+    cv2.imwrite(noise_path, noise_img)
+    vr = verify_leaked_file(noise_path)
+    rejected = vr["verdict"] == "REJECT" or vr["status"] == "watermark_not_found"
+    print(f"  [{'OK' if rejected else 'FAIL'}] Random noise image:")
+    print(f"       Verdict: {vr['verdict']}, Confidence: {vr['confidence']:.1f}%")
+    assert rejected, "FAIL: System should reject random noise image!"
+
+    # Solid color image
+    solid_img = np.full((256, 256, 3), 128, dtype=np.uint8)
+    solid_path = os.path.join(DATA_DIR, "decrypted", "solid_gray.png")
+    cv2.imwrite(solid_path, solid_img)
+    vr = verify_leaked_file(solid_path)
+    rejected = vr["verdict"] == "REJECT" or vr["status"] == "watermark_not_found"
+    print(f"  [{'OK' if rejected else 'FAIL'}] Solid gray image:")
+    print(f"       Verdict: {vr['verdict']}, Confidence: {vr['confidence']:.1f}%")
+    assert rejected, "FAIL: System should reject solid gray image!"
+
+    # Unrelated natural image (gradient, no watermark)
+    grad = np.zeros((256, 256, 3), dtype=np.uint8)
+    for yy in range(256):
+        for xx in range(256):
+            grad[yy, xx] = [xx, yy, (xx + yy) // 2]
+    grad_path = os.path.join(DATA_DIR, "decrypted", "unrelated_gradient.png")
+    cv2.imwrite(grad_path, grad)
+    vr = verify_leaked_file(grad_path)
+    rejected = vr["verdict"] == "REJECT" or vr["status"] == "watermark_not_found"
+    print(f"  [{'OK' if rejected else 'FAIL'}] Unrelated gradient image:")
+    print(f"       Verdict: {vr['verdict']}, Confidence: {vr['confidence']:.1f}%")
+    assert rejected, "FAIL: System should reject unrelated gradient image!"
+
+    print(f"\n  [OK] All non-watermarked images correctly REJECTED")
+
+    # ==================================================================
+    _separator("STEP 19: Forensic verification report (clean watermarked file)")
+    vr = verify_leaked_file(alice_path)
+    _print_forensic(vr)
+    assert vr["status"] == "identified"
+    assert vr["verdict"] == "HIGH_CONFIDENCE"
+    print(f"\n  [OK] Clean file: {vr['verdict']} identification")
+
+    # ==================================================================
+    _separator("STEP 20: Forensic analysis under attack")
+
+    # Heavy noise
+    heavy_bytes = _add_noise(alice_path, sigma=15.0)
+    heavy_path = os.path.join(DATA_DIR, "decrypted", "heavy_noise.png")
+    with open(heavy_path, "wb") as fp:
+        fp.write(heavy_bytes)
+    print(f"\n  \u2500\u2500 Heavy noise (sigma=15) \u2500\u2500")
+    vr = verify_leaked_file(heavy_path)
+    _print_forensic(vr)
+
+    # Combined: crop 15% + JPEG Q65
+    comb_bytes = _crop_and_jpeg(alice_path, 0.15, 65)
+    comb_path = os.path.join(DATA_DIR, "decrypted", "combined_attack.png")
+    with open(comb_path, "wb") as fp:
+        fp.write(comb_bytes)
+    print(f"\n  \u2500\u2500 Crop 15% + JPEG Q65 \u2500\u2500")
+    vr = verify_leaked_file(comb_path)
+    _print_forensic(vr)
+
+    # ==================================================================
     print(f"\n{'=' * 68}")
-    print(f"  ALL CORE TESTS PASSED")
+    print(f"  ALL TESTS PASSED")
     print(f"{'=' * 68}")
     print(f"  > 3 decryptions with unique watermarks")
     print(f"  > All users correctly identified")
     print(f"  > Survived: pixel mod, JPEG Q50-Q90, resize 75%, noise sigma 3-10")
     print(f"  > Survived: cropping 10-20%, rotation (sync auto-recovery)")
     print(f"  > Survived: multi-cycle JPEG, combined attacks")
+    print(f"  > False positive rejection: noise, solid gray, gradient")
+    print(f"  > Forensic confidence scoring validated")
+    print(f"  > Tamper analysis reports generated")
     print(f"  > Ledger chain verified intact")
     print(f"{'=' * 68}\n")
 
