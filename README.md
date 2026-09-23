@@ -1,8 +1,8 @@
-# SANKET - PROVENANCE-BASED DIGITAL FORENSICS USING WATERMARKING AND DECENTRALIZED LEDGERS
+# SANKET — Provenance-Based Digital Forensics Using Watermarking and Decentralized Ledgers
 
-**Phase 1 — Working Prototype**
+**Phase 1 — Working Prototype with Forensic Verification Layer**
 
-A local, modular system that encrypts documents for multi-recipient distribution, embeds unique **DCT-domain invisible watermarks** on each decryption, logs events to a tamper-evident hash-chain ledger, and identifies the source of leaked files — even after JPEG compression, resizing, or noise.
+A local, modular system that encrypts documents for multi-recipient distribution, embeds unique **DCT-domain invisible watermarks** on each decryption, logs events to a tamper-evident hash-chain ledger, and identifies the source of leaked files with **forensic-grade confidence scoring** — even after JPEG compression, cropping, rotation, resizing, or noise attacks.
 
 ---
 
@@ -12,7 +12,7 @@ A local, modular system that encrypts documents for multi-recipient distribution
 # Install dependencies
 pip install -r requirements.txt
 
-# Run full end-to-end demo
+# Run full end-to-end demo (20 test steps)
 python main.py demo
 ```
 
@@ -24,20 +24,55 @@ python main.py demo
 ```bash
 python main.py setup --users "alice,bob,charlie"
 ```
+Generates **Ed25519** (signing) and **X25519** (key exchange) keypairs per user in `data/keys/<user>/`.
 
 ### 2. Encrypt a PNG file
 ```bash
 python main.py encrypt --file path/to/image.png --recipients "alice,bob"
 ```
+Produces an encrypted package in `data/encrypted/` containing `payload.enc` + `metadata.json` (per-recipient wrapped keys).
 
 ### 3. Decrypt as a user
 ```bash
 python main.py decrypt --package data/encrypted/image --user alice
 ```
+Decrypts → generates unique watermark → embeds watermark → signs record → appends to ledger → saves watermarked PNG.
 
-### 4. Verify a leaked file
+### 4. Verify a leaked file (forensic report)
 ```bash
 python main.py verify --file path/to/leaked.png
+```
+
+**Example output:**
+```
+  ┌──────────────────────────────────────────────┐
+  │       FORENSIC VERIFICATION REPORT           │
+  └──────────────────────────────────────────────┘
+
+  [RESULT]
+    User        : alice
+    Confidence  : 81.0%
+    Verdict     : HIGH_CONFIDENCE
+    Status      : IDENTIFIED
+
+  [DETAILS]
+    CRC         : OK
+    Votes       : 100.0%
+    Sync        : Strong (100.0%)
+    Corruption  : None (0.0%)
+    Multi-signal: 3/3 agree
+    Tamper      : None
+
+  [NOTES]
+    • CRC checksum validated
+    • Watermark stable across blur and JPEG perturbation
+    • Strong sync template (100.0%)
+
+  🔍 LEAK SOURCE IDENTIFIED
+    User ID      : alice
+    Watermark    : 770ff17a35990295548c8abf72477343
+    Timestamp    : 2026-09-22T15:23:47.123456+00:00
+    Nonce        : 45d3673d3245ea22...
 ```
 
 ### 5. View and verify ledger
@@ -52,32 +87,83 @@ python main.py demo
 
 ---
 
-## Architecture
+## System Architecture
+
+### Encryption & Decryption Pipeline
 
 ```
 Original PNG
-    |
-    v
-[AES-256-GCM Encryption] --> Encrypted Package (.enc + metadata)
-    |                              |
-    |    (per-recipient X25519     |
-    |     key wrapping)            |
-    v                              v
-[Secure Decryption Pipeline]
-    |
-    |-- Decrypt (internal, raw bytes never exposed)
-    |-- Generate watermark_id = SHA256(user_id + file_id + timestamp + nonce)
-    |-- Embed watermark (DCT + QIM at mid-frequency coeff with 3x redundancy + CRC)
-    |-- Sign record (Ed25519, covers all 5 fields)
-    |-- Append to hash-chain ledger (with anchor + backup)
-    |
-    v
-Watermarked PNG Output
+    │
+    ▼
+┌─────────────────────────────────┐
+│  AES-256-GCM Encryption        │
+│  Per-recipient X25519 ECDH      │
+│  key wrapping (HKDF-SHA256)     │
+└───────────┬─────────────────────┘
+            │
+            ▼
+    Encrypted Package
+    (payload.enc + metadata.json)
+            │
+            ▼
+┌─────────────────────────────────┐
+│  Secure Decryption Pipeline     │
+│                                 │
+│  1. Decrypt (raw bytes NEVER    │
+│     returned to caller)         │
+│  2. Generate watermark_id =     │
+│     SHA256(user+file+time+nonce)│
+│  3. Embed watermark (DCT+QIM)  │
+│  4. Sign record (Ed25519)       │
+│  5. Append to hash-chain ledger │
+└───────────┬─────────────────────┘
+            │
+            ▼
+    Watermarked PNG Output
 ```
 
-**Verification Flow:**
+### Forensic Verification Pipeline
+
 ```
-Leaked PNG --> Extract Watermark --> Query Ledger --> Verify Signature --> Identified User
+Leaked PNG
+    │
+    ▼
+┌─────────────────────────────────┐
+│  Multi-Signal Extraction        │
+│  1. Extract from original       │
+│  2. Extract from blurred copy   │
+│  3. Extract from JPEG Q85 copy  │
+└───────────┬─────────────────────┘
+            │
+            ▼
+┌─────────────────────────────────┐
+│  Signal Analysis                │
+│  • Sync template scoring        │
+│  • Block corruption ratio       │
+│  • Multi-signal stability       │
+└───────────┬─────────────────────┘
+            │
+            ▼
+┌─────────────────────────────────┐
+│  Confidence Scoring Engine      │
+│  Base  = vote_ratio × 60  /60  │
+│  CRC   = +25 if valid     /25  │
+│  Sync  = +15 if strong    /15  │
+│  Corruption = -10 to -25       │
+│  ─────────────────────────      │
+│  Score = 0–100                  │
+│  Verdict = HIGH / MED / LOW /   │
+│            REJECT               │
+└───────────┬─────────────────────┘
+            │
+            ▼
+┌─────────────────────────────────┐
+│  Ledger Lookup + Signature      │
+│  Verification (Ed25519)         │
+└───────────┬─────────────────────┘
+            │
+            ▼
+    Forensic Tamper Analysis Report
 ```
 
 ---
@@ -86,77 +172,285 @@ Leaked PNG --> Extract Watermark --> Query Ledger --> Verify Signature --> Ident
 
 ```
 ps237/
-  config.py                   # Global paths and constants
-  main.py                     # CLI entry point
-  requirements.txt
-  modules/
-    crypto/
-      encryption.py           # AES-256-GCM + X25519 key wrapping
-      decryption.py           # Secure decrypt+watermark pipeline
-      signature.py            # Ed25519 sign/verify
-    watermark/
-      embedder.py             # DCT + QIM frequency-domain embedding
-      extractor.py            # DCT extraction with majority vote + CRC
-    ledger/
-      hashchain.py            # Append-only hash chain + anchor
-    verification/
-      verifier.py             # End-to-end leak attribution
-  utils/
-    helpers.py                # Validation, ID generation, CRC
-  tests/
-    demo.py                   # End-to-end demo
-  data/
-    keys/                     # Per-user keypairs
-    encrypted/                # Encrypted packages
-    decrypted/                # Watermarked outputs
-    ledger/                   # Hash-chain + anchor + backup
+├── config.py                          # Global paths and constants
+├── main.py                            # CLI entry point (6 commands)
+├── requirements.txt                   # Python dependencies
+│
+├── modules/
+│   ├── crypto/
+│   │   ├── encryption.py              # AES-256-GCM encrypt + X25519 key wrapping
+│   │   ├── decryption.py              # Secure decrypt → watermark → sign → log pipeline
+│   │   └── signature.py               # Ed25519 keypair generation, signing, verification
+│   │
+│   ├── watermark/
+│   │   ├── embedder.py                # Multi-coeff DCT + QIM embedding + sync template
+│   │   └── extractor.py               # Zone-interleaved extraction + rotation recovery
+│   │
+│   ├── ledger/
+│   │   └── hashchain.py               # Append-only hash chain + anchor + backup
+│   │
+│   └── verification/
+│       ├── verifier.py                # Forensic verification orchestrator
+│       ├── confidence.py              # Confidence scoring engine (0–100)
+│       └── forensic.py                # Multi-signal extraction + tamper analysis
+│
+├── utils/
+│   └── helpers.py                     # File validation, ID generation, CRC-16
+│
+├── tests/
+│   └── demo.py                        # End-to-end demo (20 test steps)
+│
+└── data/
+    ├── keys/                          # Per-user keypairs (Ed25519 + X25519)
+    ├── encrypted/                     # Encrypted packages (.enc + metadata.json)
+    ├── decrypted/                     # Watermarked output PNGs
+    └── ledger/                        # ledger.json + anchor.json + ledger_backup.json
 ```
 
 ---
 
-## Phase 1 Scope
+## Cryptographic Components
 
-| Feature | Status |
-|---|---|
-| AES-256-GCM encryption | Done |
-| Per-recipient key wrapping (X25519 ECDH) | Done |
-| Secure decrypt pipeline (no raw bytes leak) | Done |
-| Watermark ID with nonce (unique per session) | Done |
-| **DCT + QIM frequency-domain embedding** | **Done** |
-| Watermark redundancy (3x) | Done |
-| CRC-16 checksum | Done |
-| Majority-vote extraction | Done |
-| Ed25519 signatures (all 5 fields) | Done |
-| Hash-chain ledger with anchor | Done |
-| Ledger backup | Done |
-| Chain verification | Done |
-| Leak attribution pipeline | Done |
-| PNG-only file type restriction | Done |
+### Encryption Layer
+| Component | Algorithm | Detail |
+|-----------|-----------|--------|
+| File encryption | AES-256-GCM | 256-bit key, 96-bit nonce, authenticated encryption |
+| Key exchange | X25519 ECDH | Ephemeral keypair per recipient per file |
+| Key derivation | HKDF-SHA256 | Derives 256-bit wrapping key from ECDH shared secret |
+| Key wrapping | AES-256-GCM | File key encrypted per-recipient under derived wrapping key |
+
+### Signature Layer
+| Component | Algorithm | Detail |
+|-----------|-----------|--------|
+| Record signing | Ed25519 | Signs canonical JSON of 5 fields: watermark_id, user_id, file_id, timestamp, nonce |
+| Verification | Ed25519 | Verifies signature against user's public key |
+
+### Ledger
+| Component | Detail |
+|-----------|--------|
+| Structure | Append-only hash chain (SHA-256 block linkage) |
+| Anchor | Independent file storing latest block hash + chain length |
+| Backup | Full ledger copy updated on every write |
+| Verification | Full chain integrity check (hash linkage + anchor consistency) |
 
 ---
 
-## Watermark Robustness (DCT + QIM)
+## Watermark Engine
 
-The watermark is embedded in **mid-frequency DCT coefficients** (position 3,1) using Quantization Index Modulation with delta=50. This makes it robust against common image transformations:
+### Embedding Architecture
 
-| Attack | Survives? | Confidence |
-|---|---|---|
-| JPEG compression Q90 | Yes | 100% |
-| JPEG compression Q70 | Yes | 100% |
-| JPEG compression Q50 | Yes | 100% |
-| Resize 75% down + back up | Yes | 100% |
-| Gaussian noise (sigma=3) | Yes | 100% |
-| Gaussian noise (sigma=5) | Yes | 100% |
-| Gaussian noise (sigma=10) | Yes | 100% |
-| Pixel-level modification (200px) | Yes | 100% |
+The watermark uses **multi-coefficient DCT + Quantization Index Modulation (QIM)** with zone-interleaved spread-spectrum and a synchronization template.
 
-> **Why mid-frequency?** Low-frequency DCT coefficients carry visible image structure — modifying them causes distortion. High-frequency coefficients are discarded by JPEG compression. Mid-frequency (3,1) is the sweet spot: imperceptible to humans, resilient to compression.
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| Block size | 8×8 pixels | Standard DCT block |
+| Watermark coefficients | (2,2), (3,1), (1,3), (2,3) | 4 mid-frequency DCT positions per block |
+| Spread factor | 2 zones | Each bit embedded in 2 spatially separated zones |
+| Redundancy | 3× | Entire watermark repeated 3 times |
+| **Votes per bit** | **24** | 4 coefficients × 2 zones × 3 copies |
+| QIM delta | 38–62 (adaptive) | Varies with block variance for imperceptibility |
+| Sync coefficient | (4,2) | Separate from watermark; used for rotation recovery |
+| Sync delta | 80 | Strong QIM for robust sync detection |
+| Sync pattern | 4×4 periodic binary | Deterministic pattern for angle search |
+| Payload | 128-bit watermark + 16-bit CRC | 144 bits total per copy |
+
+### Extraction & Recovery
+
+| Feature | Detail |
+|---------|--------|
+| Majority voting | Per-bit voting across all 24 votes, then cross-copy voting |
+| CRC-16 validation | CCITT checksum validates extracted watermark integrity |
+| Corruption detection | Blocks with variance < 15 are skipped (gray fill, rotation borders) |
+| Rotation recovery | Try-and-verify across ±5.5° at 0.25° resolution using sync template |
+| Sync pre-filter | Quick sync correlation rejects unlikely rotation candidates |
+
+---
+
+## Forensic Verification Layer
+
+### Confidence Scoring Engine
+
+The system produces a **0–100 confidence score** with a categorical verdict instead of binary match/no-match.
+
+**Scoring formula:**
+
+| Signal | Contribution | Range |
+|--------|-------------|-------|
+| Vote ratio (inter-copy agreement) | Base = ratio × 60 | 0 – 60 |
+| CRC-16 checksum | +25 if valid | 0 or 25 |
+| Sync template correlation | +15 if ≥ 75%, +8 if ≥ 60% | 0, 8, or 15 |
+| Corruption (low-variance blocks) | -10 / -20 / -25 penalty | 0 to -25 |
+
+**Hard rejection rules (false positive protection):**
+- Vote ratio < 60% → immediate `REJECT`
+- CRC invalid AND vote ratio < 70% → `REJECT` (false positive guard)
+- Corruption > 80% → `REJECT` (all-zero default detection)
+
+**Verdict thresholds:**
+
+| Score | Verdict |
+|-------|---------|
+| ≥ 80 | `HIGH_CONFIDENCE` |
+| ≥ 55 | `MEDIUM` |
+| ≥ 30 | `LOW` |
+| < 30 | `REJECT` |
+
+### Multi-Signal Verification
+
+Instead of a single extraction, the system runs watermark extraction on **three versions** of the image:
+
+1. **Original** — primary extraction
+2. **Gaussian blurred** (kernel 3×3, σ=0.8) — tests watermark stability
+3. **JPEG Q85 re-compressed** — simulates common re-encoding
+
+If the same watermark_id appears in all three → **strong confidence**.  
+If mismatch → **confidence downgraded** (effective vote_ratio × 0.85 penalty).
+
+### Tamper Analysis Report
+
+Every verification returns a structured forensic report:
+
+```json
+{
+  "user": "alice",
+  "watermark_id": "770ff17a35990295548c8abf72477343",
+  "confidence": 81.0,
+  "verdict": "HIGH_CONFIDENCE",
+  "status": "identified",
+  "crc_valid": true,
+  "vote_ratio": 1.0,
+  "sync_score": 1.0,
+  "corruption": 0.0,
+  "tamper_detected": false,
+  "multi_signal_agreement": 3,
+  "multi_signal_stable": true,
+  "ledger_valid": true,
+  "signature_valid": true,
+  "notes": [
+    "CRC checksum validated",
+    "Watermark stable across blur and JPEG perturbation",
+    "Strong sync template (100.0%)"
+  ]
+}
+```
+
+---
+
+## Robustness Test Results (from demo)
+
+### Attacks that survive ✅
+
+| Attack | Confidence | CRC |
+|--------|-----------|-----|
+| JPEG Q90 | 100% agreement | ✅ Valid |
+| JPEG Q70 | 100% agreement | ✅ Valid |
+| JPEG Q50 | 100% agreement | ✅ Valid |
+| Resize 75% down + back up | 100% agreement | ✅ Valid |
+| Gaussian noise σ=3 | 100% agreement | ✅ Valid |
+| Gaussian noise σ=5 | 100% agreement | ✅ Valid |
+| Gaussian noise σ=10 | 100% agreement | ✅ Valid |
+| Gaussian noise σ=15 | 99.3% agreement | ✅ Valid |
+| Pixel modification (200px) | Identified | ✅ Valid |
+| Crop 10% (gray fill) | 94.4% agreement | ✅ Valid |
+| Crop 20% (gray fill) | 90.3% agreement | ✅ Valid |
+| Multi-cycle JPEG Q70 ×2 | 100% agreement | ✅ Valid |
+| Multi-cycle JPEG Q70 ×3 | 100% agreement | ✅ Valid |
+| Crop 10% + JPEG Q70 | 95.1% agreement | ✅ Valid |
+| Crop 10% + Noise σ=5 | 96.5% agreement | ✅ Valid |
+| Rotation +1° / +3° / +5° | 87–90% agreement | ✅ Valid |
+
+### Attacks that fail ❌
+
+| Attack | Reason |
+|--------|--------|
+| Crop 30% | Too many watermark blocks destroyed |
+| Rotation (some negative angles) | Interpolation asymmetry in recovery |
+| Rotate +5° + JPEG Q70 | Combined geometric + lossy too aggressive |
+
+### False positive rejection ✅
+
+| Input | Verdict | Confidence |
+|-------|---------|-----------|
+| Random noise image | REJECT | 0.0% |
+| Solid gray image | REJECT | 0.0% |
+| Unrelated gradient image | REJECT | 0.0% |
+
+---
+
+## Feature Status
+
+| Feature | Status |
+|---------|--------|
+| AES-256-GCM file encryption | ✅ Done |
+| Per-recipient X25519 ECDH key wrapping | ✅ Done |
+| HKDF-SHA256 key derivation | ✅ Done |
+| Secure decrypt pipeline (raw bytes never exposed) | ✅ Done |
+| Watermark ID with nonce (unique per session) | ✅ Done |
+| Multi-coefficient DCT + QIM embedding (4 coefficients) | ✅ Done |
+| Zone-interleaved spread-spectrum (2 zones) | ✅ Done |
+| Watermark redundancy (3×, 24 votes/bit) | ✅ Done |
+| CRC-16 CCITT checksum | ✅ Done |
+| Synchronization template (rotation recovery) | ✅ Done |
+| Adaptive QIM delta (38–62, variance-based) | ✅ Done |
+| Majority-vote extraction | ✅ Done |
+| Corruption-aware extraction (variance filtering) | ✅ Done |
+| Try-and-verify rotation recovery (±5.5°) | ✅ Done |
+| Ed25519 signatures (canonical 5-field signing) | ✅ Done |
+| Hash-chain ledger with anchor + backup | ✅ Done |
+| Chain integrity verification | ✅ Done |
+| **Forensic confidence scoring (0–100)** | ✅ Done |
+| **Multi-signal verification (3-way stability check)** | ✅ Done |
+| **False positive protection (hard rejection rules)** | ✅ Done |
+| **Tamper analysis report generation** | ✅ Done |
+| PNG-only file type restriction | ✅ Phase 1 |
 
 ---
 
 ## Dependencies
 
-- `cryptography` -- AES-GCM, X25519, Ed25519, HKDF
-- `Pillow` -- PNG image creation for tests
-- `numpy` -- Numerical operations for DCT watermarking
-- `opencv-python` -- DCT/IDCT transforms, image encoding/decoding
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `cryptography` | ≥ 41.0.0 | AES-GCM, X25519, Ed25519, HKDF |
+| `Pillow` | ≥ 10.0.0 | PNG image creation for tests |
+| `numpy` | ≥ 1.24.0 | Numerical operations, DCT watermarking |
+| `opencv-python` | ≥ 4.8.0 | DCT/IDCT transforms, image encoding/decoding, rotation |
+
+---
+
+## How It Works (Technical Detail)
+
+### Why mid-frequency DCT?
+
+Low-frequency DCT coefficients carry visible image structure — modifying them causes distortion. High-frequency coefficients are discarded by JPEG compression. Mid-frequency positions `(2,2), (3,1), (1,3), (2,3)` are the sweet spot: **imperceptible to humans, resilient to compression**.
+
+### Why QIM over additive watermarking?
+
+Quantization Index Modulation embeds bits by **quantizing** coefficients to specific grid points, not by adding a fixed signal. This provides:
+- **Deterministic extraction** — no need for the original image
+- **Controlled distortion** — bounded by `delta/2`
+- **JPEG resilience** — quantization grid survives re-quantization if QIM delta > JPEG step
+
+### Why multi-signal verification?
+
+A single extraction can produce false positives under heavy attack. By running extraction on three versions of the image (original, blurred, JPEG'd) and requiring agreement, the system filters out:
+- Spurious watermark matches from noise
+- Fragile extractions that collapse under minor perturbation
+- Random CRC collisions
+
+---
+
+## Known Limitations (Phase 1)
+
+- PNG-only (no JPEG, PDF, or video support)
+- Minimum image size ~128×128 (needs sufficient 8×8 blocks)
+- Rotation recovery limited to ±5.5° at 0.25° resolution
+- No 90°/180°/270° rotation handling
+- Local-only ledger (no remote/blockchain anchoring)
+- No collusion resistance (Tardos codes planned for Phase 2)
+- Private keys stored unencrypted on disk
+
+---
+
+## License
+
+This project is part of the SIH (Smart India Hackathon) problem statement PS237.
