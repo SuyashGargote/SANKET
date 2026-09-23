@@ -1,0 +1,38 @@
+{
+  "report_id": "RPT-20260923-175640",
+  "generated_at": "2026-09-23T17:56:40.655388+00:00",
+  "file_path": "D:\\SIH\\ps237\\data\\decrypted\\combined_attack.png",
+  "file_hash": "c0d627537f3882b7e1bcbda1a76acc6f11dafdebe44792f5a515f02771196c8f",
+  "user": "alice",
+  "watermark_id": "ee804da09eae1be7ef3eb9259b30eaee",
+  "status": "identified",
+  "confidence": 66.8,
+  "verdict": "MEDIUM",
+  "reasoning": "Base 46.8/60 from vote ratio 77.9%; CRC valid: +25; Strong sync (98.9%): +15; High corruption (30.1%): -20",
+  "crc_valid": true,
+  "vote_ratio": 0.9167,
+  "sync_score": 0.9887,
+  "sync_strength": "Strong",
+  "corruption_pct": 30.1,
+  "multi_signal_agreement": 2,
+  "multi_signal_stable": false,
+  "tamper_detected": true,
+  "tamper_type": "crop",
+  "tamper_details": [
+    "High corruption (30.1%) with intact sync -- large uniform-fill regions suggest cropping or content removal"
+  ],
+  "severity": "MEDIUM",
+  "ledger_valid": true,
+  "signature_valid": true,
+  "notes": [
+    "CRC checksum validated",
+    "High corruption: 30.1% of blocks affected",
+    "Multi-signal instability: 2/3 extractions agree",
+    "Strong sync template (98.9%)"
+  ],
+  "ledger_record": {
+    "index": 0,
+    "timestamp": "2026-09-23T17:53:25.191569+00:00",
+    "nonce": "612677cd81d5361941dc7289afa9207c"
+  }
+}

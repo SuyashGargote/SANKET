@@ -1,0 +1,33 @@
+{
+  "report_id": "RPT-20260923-175643",
+  "generated_at": "2026-09-23T17:56:43.412628+00:00",
+  "file_path": "D:\\SIH\\ps237\\data\\decrypted\\random_noise.png",
+  "file_hash": "fb8d3e5344f96637ec427a1a7cd85e7a533510b6549b5d4d128df77085c62382",
+  "user": "unknown",
+  "watermark_id": "000001042c0000000800000003000008",
+  "status": "rejected",
+  "confidence": 0.0,
+  "verdict": "REJECT",
+  "reasoning": "Vote ratio 53.1% below minimum threshold (60%)",
+  "crc_valid": false,
+  "vote_ratio": 0.625,
+  "sync_score": 0.5153,
+  "sync_strength": "Moderate",
+  "corruption_pct": 0.0,
+  "multi_signal_agreement": 1,
+  "multi_signal_stable": false,
+  "tamper_detected": true,
+  "tamper_type": "rotation",
+  "tamper_details": [
+    "Sync template degraded (51.5%) -- geometric misalignment suggests rotation or affine transform"
+  ],
+  "severity": "MEDIUM",
+  "ledger_valid": false,
+  "signature_valid": null,
+  "notes": [
+    "CRC mismatch — watermark may be partially corrupted",
+    "Multi-signal instability: 1/3 extractions agree",
+    "Moderate sync template (51.5%)",
+    "Ledger integrity check failed or not verified"
+  ]
+}

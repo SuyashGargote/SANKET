@@ -1,0 +1,38 @@
+{
+  "report_id": "RPT-20260923-175639",
+  "generated_at": "2026-09-23T17:56:39.447545+00:00",
+  "file_path": "D:\\SIH\\ps237\\data\\decrypted\\test_document_alice_d048875a.png",
+  "file_hash": "b836608bc6bd9bdb2fccbe34f795e368d1d87edfdee1a0fba2ddab0c6d86865e",
+  "user": "alice",
+  "watermark_id": "d048875ab8454e97359f722e1a32055e",
+  "status": "identified",
+  "confidence": 81.0,
+  "verdict": "HIGH_CONFIDENCE",
+  "reasoning": "Base 51.0/60 from vote ratio 85.0%; CRC valid: +25; Strong sync (100.0%): +15; Moderate corruption (22.7%): -10",
+  "crc_valid": true,
+  "vote_ratio": 1.0,
+  "sync_score": 1.0,
+  "sync_strength": "Strong",
+  "corruption_pct": 22.7,
+  "multi_signal_agreement": 2,
+  "multi_signal_stable": false,
+  "tamper_detected": true,
+  "tamper_type": "crop",
+  "tamper_details": [
+    "High corruption (22.7%) with intact sync -- large uniform-fill regions suggest cropping or content removal"
+  ],
+  "severity": "MEDIUM",
+  "ledger_valid": true,
+  "signature_valid": true,
+  "notes": [
+    "CRC checksum validated",
+    "Moderate corruption: 22.7% of blocks affected",
+    "Multi-signal instability: 2/3 extractions agree",
+    "Strong sync template (100.0%)"
+  ],
+  "ledger_record": {
+    "index": 2,
+    "timestamp": "2026-09-23T17:53:25.284157+00:00",
+    "nonce": "d31452b17f329e94cb5d79fc1c2cdfb2"
+  }
+}

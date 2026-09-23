@@ -110,6 +110,15 @@ def cmd_verify(args):
         print(f"\n  ⚠  Ledger record found but signature verification FAILED.")
 
 
+def cmd_report(args):
+    """Generate a full forensic analysis report."""
+    from modules.forensics.report import generate_report, print_report
+
+    report, json_path = generate_report(args.file)
+    print_report(report)
+    print(f"\n  [SAVED] Report: {json_path}")
+
+
 def cmd_ledger(args):
     """Show ledger contents and verify integrity."""
     from modules.ledger.hashchain import get_all_records, verify_chain
@@ -162,6 +171,10 @@ def main():
     p_ver = subparsers.add_parser("verify", help="Verify a leaked file")
     p_ver.add_argument("--file", required=True, help="Path to the leaked PNG file")
 
+    # report
+    p_rpt = subparsers.add_parser("report", help="Generate forensic analysis report")
+    p_rpt.add_argument("--file", required=True, help="Path to the leaked PNG file")
+
     # ledger
     subparsers.add_parser("ledger", help="Show and verify ledger")
 
@@ -179,6 +192,7 @@ def main():
         "encrypt": cmd_encrypt,
         "decrypt": cmd_decrypt,
         "verify": cmd_verify,
+        "report": cmd_report,
         "ledger": cmd_ledger,
         "demo": cmd_demo,
     }

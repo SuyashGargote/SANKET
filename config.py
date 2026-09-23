@@ -13,6 +13,7 @@ KEYS_DIR        = os.path.join(DATA_DIR, "keys")
 ENCRYPTED_DIR   = os.path.join(DATA_DIR, "encrypted")
 DECRYPTED_DIR   = os.path.join(DATA_DIR, "decrypted")
 LEDGER_DIR      = os.path.join(DATA_DIR, "ledger")
+REPORTS_DIR     = os.path.join(DATA_DIR, "reports")
 
 # ── Ledger files ──────────────────────────────────────────────
 LEDGER_FILE     = os.path.join(LEDGER_DIR, "ledger.json")
@@ -33,5 +34,5 @@ CHECKSUM_BITS        = 16          # 16-bit CRC appended to watermark
 SUPPORTED_EXTENSIONS = {".png"}
 
 # ── Ensure directories exist ─────────────────────────────────
-for d in (KEYS_DIR, ENCRYPTED_DIR, DECRYPTED_DIR, LEDGER_DIR):
+for d in (KEYS_DIR, ENCRYPTED_DIR, DECRYPTED_DIR, LEDGER_DIR, REPORTS_DIR):
     os.makedirs(d, exist_ok=True)

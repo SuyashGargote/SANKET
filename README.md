@@ -75,12 +75,65 @@ python main.py verify --file path/to/leaked.png
     Nonce        : 45d3673d3245ea22...
 ```
 
-### 5. View and verify ledger
+### 5. Generate forensic analysis report
+```bash
+python main.py report --file path/to/leaked.png
+```
+Generates a full forensic report with tamper classification and severity scoring. Saves JSON to `data/reports/` and prints to console.
+
+**Example output:**
+```
+  ========================================================
+                  FORENSIC ANALYSIS REPORT
+  ========================================================
+
+  Report ID  : RPT-20260923-175639
+  File       : test_document_alice_d048875a.png
+  File Hash  : b836608bc6bd9bdb...
+  Generated  : 2026-09-23T17:56:39+00:00
+
+  -- ATTRIBUTION ---------------------------------------
+    User         : alice
+    Watermark    : d048875ab8454e97359f722e1a32055e
+    Confidence   : 81.0%
+    Verdict      : HIGH_CONFIDENCE
+    Status       : IDENTIFIED
+
+  -- SIGNAL ANALYSIS ------------------------------------
+    CRC          : OK
+    Vote Ratio   : 100.0%
+    Sync         : Strong (100.0%)
+    Corruption   : 22.7%
+    Multi-signal : 2/3 agree
+
+  -- TAMPER ANALYSIS ------------------------------------
+    Detected     : YES
+    Type         : Crop
+    Severity     : MEDIUM
+    > High corruption (22.7%) with intact sync ...
+
+  -- LEDGER ---------------------------------------------
+    Chain Valid  : YES
+    Signature    : VALID
+    Block #      : 2
+    Timestamp    : 2026-09-23T17:53:25+00:00
+
+  -- NOTES ----------------------------------------------
+    * CRC checksum validated
+    * Moderate corruption: 22.7% of blocks affected
+    * Strong sync template (100.0%)
+
+  ========================================================
+
+  [SAVED] Report: data/reports/RPT-20260923-175639.json
+```
+
+### 6. View and verify ledger
 ```bash
 python main.py ledger
 ```
 
-### 6. Run full demo
+### 7. Run full demo
 ```bash
 python main.py demo
 ```
@@ -173,13 +226,13 @@ Leaked PNG
 ```
 ps237/
 ├── config.py                          # Global paths and constants
-├── main.py                            # CLI entry point (6 commands)
+├── main.py                            # CLI entry point (7 commands)
 ├── requirements.txt                   # Python dependencies
 │
 ├── modules/
 │   ├── crypto/
 │   │   ├── encryption.py              # AES-256-GCM encrypt + X25519 key wrapping
-│   │   ├── decryption.py              # Secure decrypt → watermark → sign → log pipeline
+│   │   ├── decryption.py              # Secure decrypt -> watermark -> sign -> log pipeline
 │   │   └── signature.py               # Ed25519 keypair generation, signing, verification
 │   │
 │   ├── watermark/
@@ -189,10 +242,13 @@ ps237/
 │   ├── ledger/
 │   │   └── hashchain.py               # Append-only hash chain + anchor + backup
 │   │
-│   └── verification/
-│       ├── verifier.py                # Forensic verification orchestrator
-│       ├── confidence.py              # Confidence scoring engine (0–100)
-│       └── forensic.py                # Multi-signal extraction + tamper analysis
+│   ├── verification/
+│   │   ├── verifier.py                # Forensic verification orchestrator
+│   │   ├── confidence.py              # Confidence scoring engine (0-100)
+│   │   └── forensic.py                # Multi-signal extraction + signal analysis
+│   │
+│   └── forensics/
+│       └── report.py                  # Report generator + tamper classification + severity
 │
 ├── utils/
 │   └── helpers.py                     # File validation, ID generation, CRC-16
@@ -204,7 +260,8 @@ ps237/
     ├── keys/                          # Per-user keypairs (Ed25519 + X25519)
     ├── encrypted/                     # Encrypted packages (.enc + metadata.json)
     ├── decrypted/                     # Watermarked output PNGs
-    └── ledger/                        # ledger.json + anchor.json + ledger_backup.json
+    ├── ledger/                        # ledger.json + anchor.json + ledger_backup.json
+    └── reports/                       # Forensic JSON reports (RPT-*.json)
 ```
 
 ---
@@ -312,25 +369,42 @@ Every verification returns a structured forensic report:
 
 ```json
 {
+  "report_id": "RPT-20260923-175639",
+  "generated_at": "2026-09-23T17:56:39.447545+00:00",
+  "file_path": "D:\\SIH\\ps237\\data\\decrypted\\test_document_alice.png",
+  "file_hash": "b836608bc6bd9bdb2fccbe34f795e368...",
   "user": "alice",
-  "watermark_id": "770ff17a35990295548c8abf72477343",
+  "watermark_id": "d048875ab8454e97359f722e1a32055e",
+  "status": "identified",
   "confidence": 81.0,
   "verdict": "HIGH_CONFIDENCE",
-  "status": "identified",
+  "reasoning": "Base 51.0/60 from vote ratio 85.0%; CRC valid: +25; Strong sync: +15; Moderate corruption: -10",
   "crc_valid": true,
   "vote_ratio": 1.0,
   "sync_score": 1.0,
-  "corruption": 0.0,
-  "tamper_detected": false,
-  "multi_signal_agreement": 3,
-  "multi_signal_stable": true,
+  "sync_strength": "Strong",
+  "corruption_pct": 22.7,
+  "multi_signal_agreement": 2,
+  "multi_signal_stable": false,
+  "tamper_detected": true,
+  "tamper_type": "crop",
+  "tamper_details": [
+    "High corruption (22.7%) with intact sync -- large uniform-fill regions suggest cropping"
+  ],
+  "severity": "MEDIUM",
   "ledger_valid": true,
   "signature_valid": true,
   "notes": [
     "CRC checksum validated",
-    "Watermark stable across blur and JPEG perturbation",
+    "Moderate corruption: 22.7% of blocks affected",
+    "Multi-signal instability: 2/3 extractions agree",
     "Strong sync template (100.0%)"
-  ]
+  ],
+  "ledger_record": {
+    "index": 2,
+    "timestamp": "2026-09-23T17:53:25.284157+00:00",
+    "nonce": "d31452b17f329e94cb5d79fc1c2cdfb2"
+  }
 }
 ```
 
@@ -398,10 +472,14 @@ Every verification returns a structured forensic report:
 | Ed25519 signatures (canonical 5-field signing) | ✅ Done |
 | Hash-chain ledger with anchor + backup | ✅ Done |
 | Chain integrity verification | ✅ Done |
-| **Forensic confidence scoring (0–100)** | ✅ Done |
+| **Forensic confidence scoring (0-100)** | ✅ Done |
 | **Multi-signal verification (3-way stability check)** | ✅ Done |
 | **False positive protection (hard rejection rules)** | ✅ Done |
 | **Tamper analysis report generation** | ✅ Done |
+| **Tamper type classification (crop/compression/noise/rotation)** | ✅ Done |
+| **Severity scoring (NONE/LOW/MEDIUM/HIGH)** | ✅ Done |
+| **JSON forensic report output** | ✅ Done |
+| **CLI `report` command** | ✅ Done |
 | PNG-only file type restriction | ✅ Phase 1 |
 
 ---
