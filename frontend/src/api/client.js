@@ -3,7 +3,12 @@
  */
 
 export const getBaseUrl = () => {
-  return localStorage.getItem('sanket_api_url') || 'http://127.0.0.1:8000';
+  const custom = localStorage.getItem('sanket_api_url');
+  if (custom) return custom.replace(/\/+$/, '');
+  if (typeof window !== 'undefined' && window.location.hostname && window.location.hostname !== 'localhost') {
+    return `http://${window.location.hostname}:8000`;
+  }
+  return 'http://127.0.0.1:8000';
 };
 
 export const setBaseUrl = (url) => {
@@ -158,6 +163,101 @@ export const api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(err.error || `Demo execution failed (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
+  // 9. Ledger Explorer Blocks
+  async getLedgerBlocks() {
+    const res = await fetch(`${getBaseUrl()}/ledger/blocks`, {
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to fetch ledger blocks (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
+  // 10. Shared Workflow - List Packages
+  async getSharedPackages() {
+    const res = await fetch(`${getBaseUrl()}/shared/packages`, {
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to fetch shared packages (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
+  // 11. Shared Workflow - List Decrypted Images
+  async getSharedDecrypted() {
+    const res = await fetch(`${getBaseUrl()}/shared/decrypted`, {
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to fetch shared decrypted files (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
+  // 12. Tamper Simulation - Modify Block 0
+  async tamperModify() {
+    const res = await fetch(`${getBaseUrl()}/ledger/tamper/modify`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to execute tamper modify (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
+  // 13. Tamper Simulation - Delete Block 1
+  async tamperDelete() {
+    const res = await fetch(`${getBaseUrl()}/ledger/tamper/delete`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to execute tamper delete (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
+  // 14. Tamper Simulation - Recompute Chain Hashes
+  async tamperRecompute() {
+    const res = await fetch(`${getBaseUrl()}/ledger/tamper/recompute`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to execute tamper recompute (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
+  // 15. Tamper Simulation - Restore Pristine Ledger
+  async tamperRestore() {
+    const res = await fetch(`${getBaseUrl()}/ledger/tamper/restore`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to restore ledger (${res.status})`);
     }
     const data = await res.json();
     return data.data || data;

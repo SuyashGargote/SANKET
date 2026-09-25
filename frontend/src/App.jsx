@@ -20,6 +20,9 @@ export default function App() {
   const [statusError, setStatusError] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
+  // Active User Simulation (Alice vs Bob)
+  const [currentUser, setCurrentUser] = useState('alice');
+
   // Modals
   const [isDemoOpen, setIsDemoOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -68,6 +71,8 @@ export default function App() {
         isOnline={isOnline}
         onRefresh={fetchStatus}
         isRefreshing={isRefreshing}
+        currentUser={currentUser}
+        onSelectUser={setCurrentUser}
       />
 
       {/* Main Content Area */}
@@ -127,18 +132,28 @@ export default function App() {
         <div className="py-2">
           {activeTab === 'encrypt' && (
             <EncryptTab
+              currentUser={currentUser}
               onFileEncrypted={(pkgPath) => {
                 setLatestPackagePath(pkgPath);
-                // Optionally prompt to navigate to Decrypt tab
+              }}
+              onSelectPackageForDecrypt={(pkgPath) => {
+                setLatestPackagePath(pkgPath);
+                setActiveTab('decrypt');
               }}
             />
           )}
 
           {activeTab === 'decrypt' && (
             <DecryptTab
+              currentUser={currentUser}
+              onUserChange={setCurrentUser}
               initialPackagePath={latestPackagePath}
               onFileDecrypted={(imgPath) => {
                 setLatestDecryptedPath(imgPath);
+              }}
+              onNavigateVerify={(imgPath) => {
+                setLatestDecryptedPath(imgPath);
+                setActiveTab('verify');
               }}
             />
           )}

@@ -57,9 +57,31 @@ export default function SettingsModal({ isOpen, onClose, onSaved }) {
               type="text"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="http://127.0.0.1:8000"
+              placeholder="http://192.168.X.X:8000"
               className="w-full px-3.5 py-2 rounded-xl bg-cyber-900 border border-slate-700 text-xs font-mono text-white focus:outline-none focus:border-cyan-500"
             />
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              <span className="text-[10px] text-slate-500">Presets:</span>
+              <button
+                type="button"
+                onClick={() => setUrl('http://127.0.0.1:8000')}
+                className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-300"
+              >
+                127.0.0.1:8000
+              </button>
+              {typeof window !== 'undefined' && window.location.hostname && (
+                <button
+                  type="button"
+                  onClick={() => setUrl(`http://${window.location.hostname}:8000`)}
+                  className="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950 text-cyan-300 border border-cyan-800 hover:bg-cyan-900"
+                >
+                  Use {window.location.hostname}:8000 (LAN)
+                </button>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-500 mt-1">
+              For LAN multi-device demo (phones/laptops), set this to your server's Wi-Fi IP (e.g. http://192.168.1.X:8000).
+            </p>
           </div>
 
           <div>

@@ -54,9 +54,12 @@ from api.cleanup import run_auto_cleanup
 from api.jobs import job_manager
 from api.security import rate_limiter, verify_api_key
 from config import (
+    ANCHOR_FILE,
     DATA_DIR,
     DECRYPTED_DIR,
     ENCRYPTED_DIR,
+    LEDGER_DIR,
+    LEDGER_FILE,
     LOGS_DIR,
     REPORTS_DIR,
     UPLOADS_DIR,
@@ -64,11 +67,44 @@ from config import (
 from modules.crypto.decryption import decrypt_file
 from modules.crypto.encryption import encrypt_file
 from modules.forensics.report import generate_report
-from modules.ledger.hashchain import get_all_records, verify_ledger_with_anchors
+from modules.ledger.hashchain import (
+    ANCHORS_FILE,
+    _compute_block_hash,
+    _load_anchors,
+    _load_chain,
+    get_all_records,
+    verify_ledger_with_anchors,
+)
 from modules.verification.verifier import verify_leaked_file
 
 # Track server start time
 SERVER_START_TIME = time.time()
+
+# Pristine backup paths for tamper simulation
+PRISTINE_LEDGER_BAK = os.path.join(LEDGER_DIR, ".pristine_ledger.bak")
+PRISTINE_ANCHOR_BAK = os.path.join(LEDGER_DIR, ".pristine_anchor.bak")
+PRISTINE_ANCHORS_BAK = os.path.join(LEDGER_DIR, ".pristine_anchors.bak")
+
+
+def ensure_pristine_backup():
+    """Create pristine copies of ledger files before any tamper demo."""
+    if not os.path.exists(PRISTINE_LEDGER_BAK) and os.path.exists(LEDGER_FILE):
+        shutil.copy2(LEDGER_FILE, PRISTINE_LEDGER_BAK)
+    if not os.path.exists(PRISTINE_ANCHOR_BAK) and os.path.exists(ANCHOR_FILE):
+        shutil.copy2(ANCHOR_FILE, PRISTINE_ANCHOR_BAK)
+    if not os.path.exists(PRISTINE_ANCHORS_BAK) and os.path.exists(ANCHORS_FILE):
+        shutil.copy2(ANCHORS_FILE, PRISTINE_ANCHORS_BAK)
+
+
+def restore_pristine_backup():
+    """Restore pristine copies of ledger files."""
+    if os.path.exists(PRISTINE_LEDGER_BAK):
+        shutil.copy2(PRISTINE_LEDGER_BAK, LEDGER_FILE)
+    if os.path.exists(PRISTINE_ANCHOR_BAK):
+        shutil.copy2(PRISTINE_ANCHOR_BAK, ANCHOR_FILE)
+    if os.path.exists(PRISTINE_ANCHORS_BAK):
+        shutil.copy2(PRISTINE_ANCHORS_BAK, ANCHORS_FILE)
+
 
 
 # ── FastAPI App Configuration ────────────────────────────────────────────────
@@ -89,6 +125,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_origin_regex=r".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -780,6 +817,217 @@ def ledger_endpoint(api_key: str = Depends(verify_api_key)):
             status_code=500,
             detail=f"Ledger verification failed: {str(e)}",
         )
+
+
+@app.get(
+    "/ledger/blocks",
+    summary="Get all ledger blocks and anchor checkpoints",
+    description="Returns the full block chain with anchor flags, hashes, and nonces for visual explorer.",
+    tags=["Ledger & Governance"],
+)
+def get_ledger_blocks(api_key: str = Depends(verify_api_key)):
+    chain = get_all_records()
+    anchors = _load_anchors()
+    anchor_indices = {a["block_index"] for a in anchors}
+
+    enriched = []
+    for i, block in enumerate(chain):
+        # A block is an anchor block if its block number (index + 1) is in anchor_indices or (index + 1) % 5 == 0
+        is_anchor = (block["index"] + 1 in anchor_indices) or ((block["index"] + 1) % 5 == 0)
+        is_latest = (i == len(chain) - 1)
+        enriched.append({
+            **block,
+            "is_anchor": is_anchor,
+            "is_latest": is_latest,
+        })
+
+    verify_res = verify_ledger_with_anchors()
+
+    return make_response({
+        "blocks": enriched,
+        "anchors": anchors,
+        "total_blocks": len(chain),
+        "ledger_status": verify_res["ledger_status"],
+        "chain_ok": verify_res["chain_ok"],
+        "anchor_ok": verify_res["anchor_ok"],
+    })
+
+
+# ── Shared Workflow Endpoints ────────────────────────────────────────────────
+
+@app.get(
+    "/shared/packages",
+    summary="List all shared encrypted packages",
+    description="Returns all encrypted packages in data/encrypted/ with recipient lists for shared multi-user workflow.",
+    tags=["Shared Workflow"],
+)
+def list_shared_packages(api_key: str = Depends(verify_api_key)):
+    packages = []
+    if os.path.exists(ENCRYPTED_DIR):
+        for name in os.listdir(ENCRYPTED_DIR):
+            pkg_path = os.path.join(ENCRYPTED_DIR, name)
+            if os.path.isdir(pkg_path):
+                meta_file = os.path.join(pkg_path, "metadata.json")
+                meta = {}
+                if os.path.exists(meta_file):
+                    try:
+                        with open(meta_file, "r") as f:
+                            meta = json.load(f)
+                    except Exception:
+                        pass
+                mtime = os.path.getmtime(pkg_path)
+                packages.append({
+                    "package_name": name,
+                    "package_path": f"data/encrypted/{name}",
+                    "original_filename": meta.get("original_filename", f"{name}.png"),
+                    "recipients": list(meta.get("wrapped_keys", {}).keys()),
+                    "created_at": datetime.fromtimestamp(mtime, timezone.utc).isoformat(),
+                })
+    packages.sort(key=lambda x: x["created_at"], reverse=True)
+    return make_response({"packages": packages, "total": len(packages)})
+
+
+@app.get(
+    "/shared/decrypted",
+    summary="List all shared watermarked outputs",
+    description="Returns all watermarked output PNG files in data/decrypted/.",
+    tags=["Shared Workflow"],
+)
+def list_shared_decrypted(api_key: str = Depends(verify_api_key)):
+    decrypted = []
+    if os.path.exists(DECRYPTED_DIR):
+        for name in os.listdir(DECRYPTED_DIR):
+            fpath = os.path.join(DECRYPTED_DIR, name)
+            if os.path.isfile(fpath) and name.endswith(".png"):
+                mtime = os.path.getmtime(fpath)
+                parts = name.replace(".png", "").split("_")
+                user_hint = parts[-2] if len(parts) >= 2 else "unknown"
+                wm_hint = parts[-1] if len(parts) >= 1 else ""
+                decrypted.append({
+                    "filename": name,
+                    "file_path": f"data/decrypted/{name}",
+                    "user": user_hint,
+                    "watermark_prefix": wm_hint,
+                    "created_at": datetime.fromtimestamp(mtime, timezone.utc).isoformat(),
+                    "size_bytes": os.path.getsize(fpath),
+                })
+    decrypted.sort(key=lambda x: x["created_at"], reverse=True)
+    return make_response({"decrypted_files": decrypted, "total": len(decrypted)})
+
+
+# ── Tamper Simulation (Judge Demo Mode) ───────────────────────────────────────
+
+@app.post(
+    "/ledger/tamper/modify",
+    summary="Tamper simulation: Modify block 0 data without updating hash",
+    description="Modifies block 0 user_id to 'ATTACKER_MODIFIED'. Demonstrates detection of block alteration (TAMPERED).",
+    tags=["Tamper Simulation"],
+)
+def tamper_modify_block(api_key: str = Depends(verify_api_key)):
+    ensure_pristine_backup()
+    chain = _load_chain()
+    if not chain:
+        raise HTTPException(status_code=400, detail="Ledger is empty. Run decryptions first.")
+
+    chain[0]["user_id"] = "ATTACKER_MODIFIED"
+    with open(LEDGER_FILE, "w") as fp:
+        json.dump(chain, fp, indent=2)
+
+    res = verify_ledger_with_anchors()
+    return make_response({
+        "action": "modify_block_0",
+        "description": "Block 0 user_id altered to 'ATTACKER_MODIFIED' without updating block hash.",
+        "ledger_status": res["ledger_status"],
+        "chain_ok": res["chain_ok"],
+        "anchor_ok": res["anchor_ok"],
+        "message": res["message"],
+    })
+
+
+@app.post(
+    "/ledger/tamper/delete",
+    summary="Tamper simulation: Delete block 1 from ledger",
+    description="Removes block 1. Demonstrates detection of record deletion (TAMPERED).",
+    tags=["Tamper Simulation"],
+)
+def tamper_delete_block(api_key: str = Depends(verify_api_key)):
+    ensure_pristine_backup()
+    chain = _load_chain()
+    if len(chain) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 blocks to simulate deletion.")
+
+    deleted = chain.pop(1)
+    with open(LEDGER_FILE, "w") as fp:
+        json.dump(chain, fp, indent=2)
+
+    res = verify_ledger_with_anchors()
+    return make_response({
+        "action": "delete_block_1",
+        "description": f"Deleted block #1 (was user={deleted.get('user_id')}). Hash chain linkage broken.",
+        "ledger_status": res["ledger_status"],
+        "chain_ok": res["chain_ok"],
+        "anchor_ok": res["anchor_ok"],
+        "message": res["message"],
+    })
+
+
+@app.post(
+    "/ledger/tamper/recompute",
+    summary="Tamper simulation: Modify block & recompute entire hash chain",
+    description="Attacker recomputes hashes to fix linkage; caught by periodic secondary anchors (ANCHOR_MISMATCH).",
+    tags=["Tamper Simulation"],
+)
+def tamper_recompute_chain(api_key: str = Depends(verify_api_key)):
+    ensure_pristine_backup()
+    chain = _load_chain()
+    if not chain:
+        raise HTTPException(status_code=400, detail="Ledger is empty. Run decryptions first.")
+
+    chain[0]["user_id"] = "ATTACKER_RECOMPUTED"
+    chain[0]["hash"] = _compute_block_hash(chain[0])
+    for i in range(1, len(chain)):
+        chain[i]["previous_hash"] = chain[i - 1]["hash"]
+        chain[i]["hash"] = _compute_block_hash(chain[i])
+
+    with open(LEDGER_FILE, "w") as fp:
+        json.dump(chain, fp, indent=2)
+
+    head_anchor = {
+        "latest_index": chain[-1]["index"],
+        "latest_hash": chain[-1]["hash"],
+        "chain_length": len(chain),
+    }
+    with open(ANCHOR_FILE, "w") as fp:
+        json.dump(head_anchor, fp, indent=2)
+
+    res = verify_ledger_with_anchors()
+    return make_response({
+        "action": "recompute_hashes",
+        "description": "Block 0 modified and all hashes recomputed. Hash chain is valid, but periodic secondary anchors caught the tampering!",
+        "ledger_status": res["ledger_status"],
+        "chain_ok": res["chain_ok"],
+        "anchor_ok": res["anchor_ok"],
+        "message": res["message"],
+    })
+
+
+@app.post(
+    "/ledger/tamper/restore",
+    summary="Tamper simulation: Restore ledger to pristine valid state",
+    description="Restores ledger and anchors from pristine backup.",
+    tags=["Tamper Simulation"],
+)
+def tamper_restore_ledger(api_key: str = Depends(verify_api_key)):
+    restore_pristine_backup()
+    res = verify_ledger_with_anchors()
+    return make_response({
+        "action": "restore",
+        "description": "Ledger, anchor head, and secondary anchors restored from pristine backup.",
+        "ledger_status": res["ledger_status"],
+        "chain_ok": res["chain_ok"],
+        "anchor_ok": res["anchor_ok"],
+        "message": res["message"],
+    })
 
 
 # ── Download Endpoints ───────────────────────────────────────────────────────

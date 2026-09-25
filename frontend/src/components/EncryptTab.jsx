@@ -1,17 +1,37 @@
-import React, { useState } from 'react';
-import { Lock, Upload, CheckCircle2, Download, RefreshCw, FileCode, Users, Sparkles, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Lock, Upload, CheckCircle2, Download, RefreshCw, FileCode, Users, Sparkles, AlertCircle, ArrowRight, FolderGit2 } from 'lucide-react';
 import { api } from '../api/client';
 
-export default function EncryptTab({ onFileEncrypted }) {
+export default function EncryptTab({ onFileEncrypted, onSelectPackageForDecrypt, currentUser = 'alice' }) {
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
-  const [recipients, setRecipients] = useState('alice,bob');
+  const [recipients, setRecipients] = useState(currentUser === 'alice' ? 'bob,alice' : 'alice,bob');
   const [isAsync, setIsAsync] = useState(false);
   const [loading, setLoading] = useState(false);
   const [jobId, setJobId] = useState(null);
   const [jobStatus, setJobStatus] = useState(null);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+
+  // Shared packages for multi-user LAN workflow
+  const [sharedPackages, setSharedPackages] = useState([]);
+  const [loadingShared, setLoadingShared] = useState(false);
+
+  const fetchSharedData = async () => {
+    setLoadingShared(true);
+    try {
+      const res = await api.getSharedPackages();
+      setSharedPackages(res.packages || []);
+    } catch (err) {
+      console.warn('Failed to load shared packages:', err);
+    } finally {
+      setLoadingShared(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSharedData();
+  }, []);
 
   const handleFileChange = (e) => {
     const selected = e.target.files[0];
@@ -63,6 +83,7 @@ export default function EncryptTab({ onFileEncrypted }) {
           clearInterval(interval);
           setResult(job.result);
           setLoading(false);
+          fetchSharedData();
           if (onFileEncrypted) onFileEncrypted(job.result.package_path);
         } else if (job.status === 'failed') {
           clearInterval(interval);
@@ -97,6 +118,7 @@ export default function EncryptTab({ onFileEncrypted }) {
         const payload = res.data || res;
         setResult(payload);
         setLoading(false);
+        fetchSharedData();
         if (onFileEncrypted) onFileEncrypted(payload.package_path);
       }
     } catch (err) {
@@ -315,6 +337,98 @@ export default function EncryptTab({ onFileEncrypted }) {
         <div className="mt-4 pt-3 border-t border-slate-800/60 text-[11px] text-slate-500 flex items-center justify-between">
           <span>💡 Next: Proceed to Decrypt tab to test watermarking.</span>
         </div>
+      </div>
+
+      {/* Shared Workflow: Shared Packages Explorer (Requirement 3) */}
+      <div className="lg:col-span-12 glass-panel rounded-2xl p-6 border border-slate-800 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center space-x-2.5">
+            <div className="p-2 rounded-xl bg-cyan-950/60 text-cyan-400 border border-cyan-800/50">
+              <FolderGit2 className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-white flex items-center space-x-2">
+                <span>Shared Encrypted Packages</span>
+                <span className="px-2 py-0.5 text-[10px] font-mono rounded-full bg-slate-800 text-slate-300">
+                  {sharedPackages.length} available
+                </span>
+              </h3>
+              <p className="text-xs text-slate-400">
+                LAN-shared document repository. Packages encrypted by Alice are instantly visible to Bob.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={fetchSharedData}
+            disabled={loadingShared}
+            className="flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-200 bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 self-start sm:self-auto disabled:opacity-50 transition-colors"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-cyan-400 ${loadingShared ? 'animate-spin' : ''}`} />
+            <span>Refresh Shared Data</span>
+          </button>
+        </div>
+
+        {sharedPackages.length === 0 ? (
+          <div className="p-6 text-center border border-dashed border-slate-800 rounded-xl text-xs text-slate-500">
+            No shared packages found in <code>data/encrypted/</code>. Encrypt a file above to create one.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {sharedPackages.map((pkg) => (
+              <div
+                key={pkg.package_path}
+                className="p-4 rounded-xl bg-cyber-900/60 border border-slate-800/80 hover:border-cyan-500/50 transition-all flex flex-col justify-between space-y-3"
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-xs font-mono font-bold text-white truncate" title={pkg.package_name}>
+                      {pkg.package_name}
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-mono shrink-0">
+                      {pkg.created_at ? new Date(pkg.created_at).toLocaleTimeString() : ''}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 font-mono truncate mt-0.5">
+                    {pkg.package_path}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="text-[10px] text-slate-500">Recipients:</span>
+                    {pkg.recipients && pkg.recipients.length > 0 ? (
+                      pkg.recipients.map((r) => (
+                        <span
+                          key={r}
+                          className={`px-1.5 py-0.2 rounded text-[10px] font-mono ${
+                            r === currentUser
+                              ? 'bg-cyan-950 text-cyan-300 border border-cyan-800 font-semibold'
+                              : 'bg-slate-800 text-slate-400'
+                          }`}
+                        >
+                          {r}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-[10px] text-slate-500">None specified</span>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => onSelectPackageForDecrypt && onSelectPackageForDecrypt(pkg.package_path)}
+                    className="w-full flex items-center justify-center space-x-1.5 py-1.5 px-3 rounded-lg text-xs font-semibold text-cyan-300 bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-800/60 transition-colors"
+                  >
+                    <span>Decrypt as {currentUser.toUpperCase()}</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
