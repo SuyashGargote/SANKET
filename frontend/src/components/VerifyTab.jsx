@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Search, Upload, ShieldCheck, ShieldAlert, CheckCircle2, AlertTriangle, XCircle, RefreshCw, UserCheck, Hash, Layers } from 'lucide-react';
 import { api } from '../api/client';
+import FinalResultScreen from './FinalResultScreen';
 
 export default function VerifyTab({ prefillImagePath }) {
   const [file, setFile] = useState(null);
@@ -160,143 +161,70 @@ export default function VerifyTab({ prefillImagePath }) {
         </div>
 
         {/* Right: Visually Strong Highlight Box (Judge Impact Zone) */}
-        <div className="lg:col-span-7 flex flex-col">
+        <div className="lg:col-span-7 flex flex-col space-y-4">
           {result ? (
-            <div
-              className={`p-6 sm:p-8 rounded-3xl border-2 ${verdictStyles.bg} ${verdictStyles.border} ${verdictStyles.shadow} shadow-2xl flex flex-col justify-between space-y-6 transition-all duration-300`}
-            >
-              {/* Top Banner & Status */}
-              <div className="flex items-center justify-between border-b border-white/10 pb-4">
-                <div className="flex items-center space-x-2">
-                  {isIdentified ? (
-                    <div className="p-2 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                      <UserCheck className="w-5 h-5" />
-                    </div>
-                  ) : (
-                    <div className="p-2 rounded-xl bg-rose-500/20 text-rose-300 border border-rose-500/40">
-                      <XCircle className="w-5 h-5" />
-                    </div>
-                  )}
-                  <span className="text-xs uppercase font-mono tracking-widest text-slate-400">
-                    Forensic Verdict
-                  </span>
-                </div>
-                <span
-                  className={`px-3 py-1 rounded-full text-xs font-mono font-bold uppercase tracking-wider border ${verdictStyles.badge}`}
-                >
-                  {result.verdict}
+            <div className="space-y-6">
+              {/* Dramatic Final Result Screen (Requirement 3 + 4 + 5) */}
+              <FinalResultScreen
+                user={result.user || 'UNKNOWN'}
+                confidence={result.confidence || 0}
+                status={isIdentified ? 'VERIFIED' : 'UNVERIFIED'}
+                watermarkId={result.watermark_id || ''}
+                tamperType={result.tamper_detected ? 'Cropping / Noise Attack' : 'Clean Copy'}
+                afterImageUrl={previewUrl}
+                showAttack={true}
+                showExplanation={true}
+              />
+
+              {/* Technical Breakdown Details Card */}
+              <div className="p-5 rounded-2xl glass-panel border border-slate-800 space-y-3 font-mono text-xs">
+                <span className="text-[11px] uppercase tracking-wider text-slate-400 font-bold block pb-2 border-b border-slate-800">
+                  Detailed Forensic Telemetry
                 </span>
-              </div>
 
-              {/* Main Callout: Identified User */}
-              <div className="space-y-2">
-                <span className="text-xs uppercase tracking-wider text-slate-400 font-mono">
-                  Identified Leak Origin
-                </span>
-                <div className="flex items-baseline space-x-3">
-                  <h1 className="text-3xl sm:text-5xl font-black tracking-tight text-white font-mono uppercase">
-                    {result.user ? result.user : 'UNKNOWN'}
-                  </h1>
-                  {isIdentified && (
-                    <span className="px-2.5 py-1 text-xs font-mono font-semibold rounded-lg bg-emerald-950 border border-emerald-500 text-emerald-400">
-                      CONFIRMED
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                  <div className="p-2.5 rounded-xl bg-cyber-900 border border-slate-800">
+                    <span className="text-[10px] text-slate-500 block">CRC-16</span>
+                    <span className={`font-bold ${result.crc_valid ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {result.crc_valid ? 'PASSED' : 'FAILED'}
                     </span>
-                  )}
-                </div>
-                <p className="text-xs text-slate-300">
-                  {isIdentified
-                    ? `Mathematical watermark signature unequivocally matches ${result.user.toUpperCase()}'s decryption key.`
-                    : 'Unable to reliably attribute watermark signature to any registered user.'}
-                </p>
-              </div>
-
-              {/* Forensic Metrics Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-                {/* Confidence Gauge */}
-                <div className="p-3.5 rounded-2xl bg-cyber-950/70 border border-white/10 text-center">
-                  <span className="text-[11px] uppercase tracking-wider text-slate-400 block mb-1">
-                    Confidence
-                  </span>
-                  <span className={`text-2xl font-black font-mono ${verdictStyles.text}`}>
-                    {result.confidence !== undefined ? `${result.confidence.toFixed(1)}%` : '--'}
-                  </span>
-                </div>
-
-                {/* CRC Status */}
-                <div className="p-3.5 rounded-2xl bg-cyber-950/70 border border-white/10 text-center">
-                  <span className="text-[11px] uppercase tracking-wider text-slate-400 block mb-1">
-                    CRC-16
-                  </span>
-                  <span
-                    className={`text-sm font-black font-mono inline-block px-2 py-1 rounded ${
-                      result.crc_valid
-                        ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
-                        : 'bg-rose-950 text-rose-400 border border-rose-800'
-                    }`}
-                  >
-                    {result.crc_valid ? 'PASSED' : 'FAILED'}
-                  </span>
-                </div>
-
-                {/* Multi-Signal Agreement */}
-                <div className="p-3.5 rounded-2xl bg-cyber-950/70 border border-white/10 text-center">
-                  <span className="text-[11px] uppercase tracking-wider text-slate-400 block mb-1">
-                    Multi-Signal
-                  </span>
-                  <span className="text-lg font-bold font-mono text-cyan-300">
-                    {result.multi_signal_agreement ?? 0}/3 Agree
-                  </span>
-                </div>
-
-                {/* Tamper Detection */}
-                <div className="p-3.5 rounded-2xl bg-cyber-950/70 border border-white/10 text-center">
-                  <span className="text-[11px] uppercase tracking-wider text-slate-400 block mb-1">
-                    Tampering
-                  </span>
-                  <span
-                    className={`text-sm font-bold font-mono inline-block px-2 py-1 rounded ${
-                      result.tamper_detected
-                        ? 'bg-amber-950 text-amber-400 border border-amber-800'
-                        : 'bg-slate-900 text-slate-300'
-                    }`}
-                  >
-                    {result.tamper_detected ? 'DETECTED' : 'CLEAN'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Forensic Notes & Watermark Details */}
-              {result.watermark_id && (
-                <div className="p-3.5 rounded-xl bg-cyber-950/90 border border-white/10 space-y-2 text-xs font-mono">
-                  <div className="flex justify-between items-center text-slate-400 text-[11px]">
-                    <span className="flex items-center space-x-1">
-                      <Hash className="w-3 h-3 text-cyan-400" />
-                      <span>Extracted Watermark Hash:</span>
-                    </span>
-                    <span className="text-cyan-400 font-bold">128-bit DCT-QIM</span>
                   </div>
-                  <p className="p-2 rounded bg-black/50 text-slate-300 break-all border border-slate-800/80 text-[11px]">
-                    {result.watermark_id}
-                  </p>
+                  <div className="p-2.5 rounded-xl bg-cyber-900 border border-slate-800">
+                    <span className="text-[10px] text-slate-500 block">Multi-Signal</span>
+                    <span className="font-bold text-cyan-300">
+                      {result.multi_signal_agreement ?? 0}/3 Agree
+                    </span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-cyber-900 border border-slate-800">
+                    <span className="text-[10px] text-slate-500 block">Sync Score</span>
+                    <span className="font-bold text-emerald-300">
+                      {result.sync_score ? `${(result.sync_score * 100).toFixed(0)}%` : '--'}
+                    </span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-cyber-900 border border-slate-800">
+                    <span className="text-[10px] text-slate-500 block">Tampering</span>
+                    <span className={`font-bold ${result.tamper_detected ? 'text-amber-400' : 'text-slate-300'}`}>
+                      {result.tamper_detected ? 'DETECTED' : 'CLEAN'}
+                    </span>
+                  </div>
                 </div>
-              )}
 
-              {/* Explanatory Reasoning */}
-              {result.notes && result.notes.length > 0 && (
-                <div className="space-y-1.5 pt-1">
-                  <span className="text-[11px] font-mono uppercase text-slate-400 tracking-wider">
-                    Forensic Findings:
-                  </span>
-                  <ul className="space-y-1">
-                    {result.notes.map((note, idx) => (
-                      <li key={idx} className="text-xs text-slate-300 flex items-start space-x-2">
-                        <span className="text-cyan-400">•</span>
-                        <span>{note}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+                {result.notes && result.notes.length > 0 && (
+                  <div className="pt-2 border-t border-slate-800/80 space-y-1">
+                    <span className="text-[10px] uppercase text-slate-500 block">
+                      Analyst Notes:
+                    </span>
+                    <ul className="space-y-1">
+                      {result.notes.map((note, idx) => (
+                        <li key={idx} className="text-[11px] text-slate-300 flex items-start space-x-1.5">
+                          <span className="text-cyan-400">•</span>
+                          <span>{note}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             <div className="h-full min-h-[380px] glass-panel border-2 border-dashed border-slate-800/80 rounded-3xl p-8 flex flex-col items-center justify-center text-center space-y-3 text-slate-500">
@@ -305,7 +233,7 @@ export default function VerifyTab({ prefillImagePath }) {
               </div>
               <p className="text-sm font-medium text-slate-400">Awaiting Suspected Leak File</p>
               <p className="text-xs text-slate-600 max-w-sm">
-                Upload a suspected leak above to trigger DCT-domain watermark extraction, sync analysis, and cryptographic attribution.
+                Upload a suspected leak to execute multi-signal DCT extraction, sync template analysis, and cryptographic attribution.
               </p>
             </div>
           )}

@@ -32,6 +32,42 @@ npm run dev
 python main.py demo
 ```
 
+---
+
+## 🖥️ Enterprise Web Dashboard & User Workflow
+
+SANKET features a modern, clean enterprise UI modeled after secure enterprise workspaces (ProtonDrive / Box DLP):
+
+```
+┌───────────────────────────────────────────────────────────────────────────────────────────┐
+│ 1. Alice Sends ➔ 2. Bob Receives ➔ 3. Bob Opens (Watermarked) ➔ 4. Leak Occurs ➔ 5. Source Detected │
+└───────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 1. Workflow Architecture & 4 Core Tabs:
+* **Tab 1: Send File** — AES-256-GCM payload encryption with per-recipient X25519 ECDH key encapsulation.
+* **Tab 2: My Files** — Split view for **Received Files** and **Sent Files**.
+  * View sender, recipients, timestamps, and package hashes.
+  * Click **"Open / Decrypt"** to unlock in a secure document modal.
+  * Automatically embeds recipient-unique invisible DCT watermark + signs audit block into ledger.
+  * Direct **"Simulate Leak & Test Detection"** one-click trigger.
+* **Tab 3: Leak Investigation** — Forensic-grade attribution designed for maximum clarity:
+  * **Big Centered Result Screen**: Immediate verdict banner: `LEAK SOURCE IDENTIFIED: BOB (94.5% CONFIDENCE)`.
+  * **Side-by-Side Attack Visualization**: Clear before/after comparison with a pulsating red bounding box highlighting the exact tampered region.
+  * **Plain-English Explanation**: 3 concise bullet points explaining watermark extraction, CRC validation, and mathematical non-repudiation.
+  * **Deep Telemetry Drawer**: Expandable panel for technical auditors (CRC-16, Sync strength, QIM delta, Multi-signal 3/3 consensus).
+* **Tab 4: Anchored Ledger** — Interactive node graph:
+  * Rendered blockchain-style blocks with `prev_hash ➔ hash` arrows.
+  * Color coded: **Green** for valid blocks, **Gold** for anchor checkpoints (every 5 blocks), **Red** for broken chain.
+  * Includes a **Tamper Simulator** button to demonstrate instant tamper detection and anchor mismatch warnings.
+
+### 2. 10-Second Judge Demonstration Flow:
+1. **Switch user to Alice** (top-right header switcher).
+2. Go to **"Send File"** ➔ click **"Use Sample Document"** ➔ click **"Encrypt & Dispatch to Bob"**.
+3. **Switch user to Bob** (header switcher).
+4. Go to **"My Files"** ➔ click **"Open / Decrypt"** on the received document.
+5. In the Document Viewer modal, click **"Simulate Leak & Test Detection"**.
+6. Observe the **Big Centered Verdict Screen** with 94%+ confidence identifying **Bob** as the leaker!
 
 ---
 
@@ -625,6 +661,15 @@ Every verification returns a structured forensic report:
 | **Severity scoring (NONE/LOW/MEDIUM/HIGH)** | ✅ Done |
 | **JSON forensic report output** | ✅ Done |
 | **CLI `report` command** | ✅ Done |
+| **FastAPI REST API with Async Job Worker** | ✅ Done |
+| **API Key Authentication & IP Rate Limiting** | ✅ Done |
+| **Tamper-Proof Anchored Ledger (`anchors.json`)** | ✅ Done |
+| **Enterprise Web Dashboard (Vite + React + Tailwind)** | ✅ Done |
+| **"My Files" Workflow (Received & Sent tabs)** | ✅ Done |
+| **Big Centered Leak Verdict Screen** | ✅ Done |
+| **Side-by-Side Tamper Region Bounding Box** | ✅ Done |
+| **Interactive Node Graph Ledger Visualizer** | ✅ Done |
+| **LAN Multi-User Perspective Switcher (Alice/Bob)** | ✅ Done |
 | PNG-only file type restriction | ✅ Phase 1 |
 
 ---

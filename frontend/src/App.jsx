@@ -1,33 +1,38 @@
 import React, { useState, useEffect } from 'react';
 import Header from './components/Header';
 import StatusCards from './components/StatusCards';
-import EncryptTab from './components/EncryptTab';
-import DecryptTab from './components/DecryptTab';
-import VerifyTab from './components/VerifyTab';
-import ReportTab from './components/ReportTab';
+import WorkflowBanner from './components/WorkflowBanner';
+import SendFileTab from './components/SendFileTab';
+import MyFilesTab from './components/MyFilesTab';
+import LeakInvestigationTab from './components/LeakInvestigationTab';
 import LedgerTab from './components/LedgerTab';
-import ArchitectureTab from './components/ArchitectureTab';
+import DocumentViewerModal from './components/DocumentViewerModal';
 import DemoModal from './components/DemoModal';
+import StoryModeModal from './components/StoryModeModal';
 import SettingsModal from './components/SettingsModal';
-import { Lock, Unlock, Search, FileText, Server, Layers, Sparkles } from 'lucide-react';
+import { Send, Inbox, Search, Server } from 'lucide-react';
 import { api } from './api/client';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('verify'); // Default to Verify or Dashboard as requested
+  // Navigation: 1. Send File, 2. My Files, 3. Leak Investigation, 4. Ledger
+  const [activeTab, setActiveTab] = useState('my-files');
   const [statusData, setStatusData] = useState(null);
   const [isOnline, setIsOnline] = useState(false);
   const [isLoadingStatus, setIsLoadingStatus] = useState(true);
   const [statusError, setStatusError] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Active User Simulation (Alice vs Bob)
-  const [currentUser, setCurrentUser] = useState('alice');
+  // Simulated identity (Alice vs Bob switch)
+  const [currentUser, setCurrentUser] = useState('bob');
 
   // Modals
   const [isDemoOpen, setIsDemoOpen] = useState(false);
+  const [isStoryOpen, setIsStoryOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isViewerOpen, setIsViewerOpen] = useState(false);
+  const [openedDocument, setOpenedDocument] = useState(null);
 
-  // Workflow shared state
+  // Workflow state passed between tabs
   const [latestPackagePath, setLatestPackagePath] = useState('data/encrypted/test_document');
   const [latestDecryptedPath, setLatestDecryptedPath] = useState(null);
 
@@ -53,20 +58,20 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // 4 Core User Workflow Navigation Tabs (Requirement 3)
   const tabs = [
-    { id: 'encrypt', label: '1. Encrypt', icon: Lock, badge: 'AES-GCM' },
-    { id: 'decrypt', label: '2. Decrypt', icon: Unlock, badge: 'DCT-QIM' },
-    { id: 'verify', label: '3. Verify Leak', icon: Search, badge: 'CORE', highlight: true },
-    { id: 'report', label: '4. Forensic Report', icon: FileText, badge: 'Tamper AI' },
-    { id: 'ledger', label: '5. Ledger & Anchors', icon: Server, badge: 'Hash-Chain' },
-    { id: 'architecture', label: 'Architecture', icon: Layers, badge: 'Flow' },
+    { id: 'send', label: '1. Send File', icon: Send, desc: 'Encrypt & dispatch' },
+    { id: 'my-files', label: '2. My Files', icon: Inbox, desc: 'Sent & received files' },
+    { id: 'leak', label: '3. Leak Investigation', icon: Search, desc: 'Forensic source trace' },
+    { id: 'ledger', label: '4. Ledger', icon: Server, desc: 'Cryptographic audit' },
   ];
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#07090e] text-slate-100 font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
-      {/* Top Navigation & Brand Header */}
+    <div className="min-h-screen flex flex-col bg-[#0b0f17] text-slate-100 font-sans selection:bg-blue-500/30 selection:text-blue-200">
+      {/* Top Navbar */}
       <Header
         onOpenDemo={() => setIsDemoOpen(true)}
+        onOpenStory={() => setIsStoryOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
         isOnline={isOnline}
         onRefresh={fetchStatus}
@@ -75,117 +80,122 @@ export default function App() {
         onSelectUser={setCurrentUser}
       />
 
-      {/* Main Content Area */}
+      {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-        {/* Real-Time System Status Cards */}
+        {/* Real-time System Metrics */}
         <StatusCards
           statusData={statusData}
           isLoading={isLoadingStatus}
           error={statusError}
         />
 
-        {/* Tab Navigation Bar */}
-        <div className="flex items-center space-x-2 border-b border-slate-800/80 overflow-x-auto pb-1 scrollbar-none">
+        {/* 5-Step Process Flow Banner (Requirement 6: Understand in under 10 seconds) */}
+        <WorkflowBanner
+          activeTab={activeTab}
+          onRunDemo={() => setIsDemoOpen(true)}
+        />
+
+        {/* Clean Enterprise Navigation Tabs (Requirement 3) */}
+        <div className="flex items-center space-x-1 sm:space-x-2 border-b border-slate-800 overflow-x-auto pb-1 scrollbar-none">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
+
             return (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`relative flex items-center space-x-2 py-3 px-4 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
+                className={`relative flex items-center space-x-2 py-3 px-3.5 sm:px-5 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap ${
                   isActive
-                    ? 'bg-cyber-900 text-white border border-slate-700 shadow-md'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/60'
+                    ? 'bg-slate-900 text-white border border-slate-700 shadow-sm'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-900/40'
                 }`}
               >
                 <Icon
                   className={`w-4 h-4 ${
-                    isActive
-                      ? tab.highlight
-                        ? 'text-cyan-400 animate-pulse'
-                        : 'text-cyan-400'
-                      : 'text-slate-500'
+                    isActive ? 'text-blue-500' : 'text-slate-500'
                   }`}
                 />
                 <span>{tab.label}</span>
-                {tab.badge && (
-                  <span
-                    className={`px-1.5 py-0.2 rounded text-[10px] font-mono tracking-wider ${
-                      tab.highlight
-                        ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40'
-                        : 'bg-slate-800 text-slate-400'
-                    }`}
-                  >
-                    {tab.badge}
-                  </span>
-                )}
                 {isActive && (
-                  <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-gradient-to-r from-cyan-500 to-indigo-500 rounded-full" />
+                  <div className="absolute bottom-0 left-3 right-3 h-0.5 bg-blue-500 rounded-full" />
                 )}
               </button>
             );
           })}
         </div>
 
-        {/* Active Tab Panel */}
+        {/* Tab Panels: User Workflow System */}
         <div className="py-2">
-          {activeTab === 'encrypt' && (
-            <EncryptTab
+          {/* TAB 1: Send File */}
+          {activeTab === 'send' && (
+            <SendFileTab
               currentUser={currentUser}
-              onFileEncrypted={(pkgPath) => {
+              onFileSent={(pkgPath) => {
                 setLatestPackagePath(pkgPath);
               }}
-              onSelectPackageForDecrypt={(pkgPath) => {
-                setLatestPackagePath(pkgPath);
-                setActiveTab('decrypt');
-              }}
+              onNavigateMyFiles={() => setActiveTab('my-files')}
+              onSelectUser={setCurrentUser}
             />
           )}
 
-          {activeTab === 'decrypt' && (
-            <DecryptTab
+          {/* TAB 2: My Files (Received / Sent) */}
+          {activeTab === 'my-files' && (
+            <MyFilesTab
               currentUser={currentUser}
-              onUserChange={setCurrentUser}
-              initialPackagePath={latestPackagePath}
-              onFileDecrypted={(imgPath) => {
-                setLatestDecryptedPath(imgPath);
+              onOpenDocument={(doc) => {
+                setOpenedDocument(doc);
+                setIsViewerOpen(true);
               }}
-              onNavigateVerify={(imgPath) => {
-                setLatestDecryptedPath(imgPath);
-                setActiveTab('verify');
-              }}
+              onNavigateSend={() => setActiveTab('send')}
             />
           )}
 
-          {activeTab === 'verify' && (
-            <VerifyTab prefillImagePath={latestDecryptedPath} />
+          {/* TAB 3: Leak Investigation */}
+          {activeTab === 'leak' && (
+            <LeakInvestigationTab prefillImagePath={latestDecryptedPath} />
           )}
 
-          {activeTab === 'report' && <ReportTab />}
-
+          {/* TAB 4: Ledger & Audit Chain */}
           {activeTab === 'ledger' && <LedgerTab />}
-
-          {activeTab === 'architecture' && <ArchitectureTab />}
         </div>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t border-slate-800/80 bg-cyber-950/60 py-4 text-center text-xs text-slate-500">
+      {/* Clean Corporate Footer */}
+      <footer className="border-t border-slate-800/80 bg-slate-950 py-4 text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <p>
-            SANKET — Cryptographic Attribution & Decryption Provenance Platform
+            SANKET — Enterprise Secure File Exchange with Non-Repudiable Attribution
           </p>
-          <div className="flex items-center space-x-3 text-[11px] font-mono">
-            <span>FastAPI Backend: :8000</span>
+          <div className="flex items-center space-x-3 text-[11px] font-mono text-slate-500">
+            <span>FastAPI Core: :8000</span>
             <span>•</span>
-            <span>React + Tailwind CSS Frontend</span>
+            <span>DCT-QIM Watermarking</span>
+            <span>•</span>
+            <span>Ed25519 Anchored Ledger</span>
           </div>
         </div>
       </footer>
 
-      {/* Modals */}
+      {/* Document Viewer Modal for Opened Received Files */}
+      <DocumentViewerModal
+        isOpen={isViewerOpen}
+        onClose={() => setIsViewerOpen(false)}
+        documentData={openedDocument}
+        currentUser={currentUser}
+        onSimulateLeak={(imagePath) => {
+          setLatestDecryptedPath(imagePath);
+          setActiveTab('leak');
+        }}
+      />
+
+      {/* 1-Click Complete Flow Demo Modal */}
       <DemoModal isOpen={isDemoOpen} onClose={() => setIsDemoOpen(false)} />
+
+      {/* Story Mode Guide */}
+      <StoryModeModal isOpen={isStoryOpen} onClose={() => setIsStoryOpen(false)} />
+
+      {/* Connection Settings */}
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
