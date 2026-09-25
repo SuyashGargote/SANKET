@@ -146,6 +146,17 @@ def cmd_demo(args):
     run_demo()
 
 
+def cmd_ledger_verify(args):
+    """Verify ledger with anchor-based tamper detection."""
+    from modules.ledger.hashchain import verify_ledger_with_anchors
+
+    result = verify_ledger_with_anchors()
+    print(f"\n  Ledger Status     : {result['ledger_status']}")
+    print(f"  Chain Integrity   : {'OK' if result['chain_ok'] else 'FAILED'}")
+    print(f"  Anchors Verified  : {'YES' if result['anchor_ok'] else 'NO'}")
+    print(f"  Message           : {result['message']}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="provenance",
@@ -178,6 +189,9 @@ def main():
     # ledger
     subparsers.add_parser("ledger", help="Show and verify ledger")
 
+    # ledger-verify
+    subparsers.add_parser("ledger-verify", help="Verify ledger with anchor tamper detection")
+
     # demo
     subparsers.add_parser("demo", help="Run end-to-end demo")
 
@@ -194,6 +208,7 @@ def main():
         "verify": cmd_verify,
         "report": cmd_report,
         "ledger": cmd_ledger,
+        "ledger-verify": cmd_ledger_verify,
         "demo": cmd_demo,
     }
     commands[args.command](args)

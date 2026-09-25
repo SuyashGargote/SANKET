@@ -277,10 +277,16 @@ def generate_report(
         # ── Ledger ───────────────────────────────────────────────
         "ledger_valid": vr.get("ledger_valid", False),
         "signature_valid": vr.get("signature_valid"),
-
-        # ── Notes ────────────────────────────────────────────────
-        "notes": vr.get("notes", []),
     }
+
+    # Add anchor-based ledger verification
+    from modules.ledger.hashchain import verify_ledger_with_anchors
+    anchor_result = verify_ledger_with_anchors()
+    report["ledger_status"] = anchor_result["ledger_status"]
+    report["anchor_valid"] = anchor_result["anchor_ok"]
+
+    # ── Notes ────────────────────────────────────────────────
+    report["notes"] = vr.get("notes", [])
 
     # Include ledger record details if available
     if vr.get("record"):

@@ -15,6 +15,7 @@ Step 16:      Ledger contents
 Step 17:      Ledger integrity verification
 """
 
+import json
 import os
 import sys
 import shutil
@@ -439,6 +440,123 @@ def run_demo():
     _print_forensic(vr)
 
     # ==================================================================
+    _separator("STEP 21: Extra decryptions to trigger anchor (need 5 blocks)")
+
+    # We have 3 blocks (alice, bob, alice). Need 2 more to trigger anchor at 5.
+    _ = decrypt_file(pkg_dir, "bob")
+    print(f"  [OK] Bob decrypts again (block #3)")
+    _ = decrypt_file(pkg_dir, "alice")
+    print(f"  [OK] Alice decrypts again (block #4)")
+    print(f"  Ledger now has 5 blocks -- anchor should be created")
+
+    # Verify anchor was created
+    from modules.ledger.hashchain import _load_anchors, ANCHORS_FILE
+    anchors = _load_anchors()
+    assert len(anchors) >= 1, "FAIL: Anchor was not created at block 5!"
+    print(f"  [OK] Periodic anchor created: block_index={anchors[-1]['block_index']}")
+
+    # ==================================================================
+    _separator("STEP 22: Ledger attack -- modify block")
+
+    from modules.ledger.hashchain import (
+        _load_chain, _compute_block_hash, _compute_ledger_snapshot,
+        _save_anchors, _load_anchors, verify_ledger_with_anchors,
+        LEDGER_FILE, ANCHOR_FILE, ANCHORS_FILE,
+    )
+    import shutil
+
+    # Save pristine copies for restoration
+    pristine_ledger = os.path.join(DATA_DIR, "ledger", "_pristine_ledger.json")
+    pristine_anchor = os.path.join(DATA_DIR, "ledger", "_pristine_anchor.json")
+    pristine_anchors = os.path.join(DATA_DIR, "ledger", "_pristine_anchors.json")
+    shutil.copy2(LEDGER_FILE, pristine_ledger)
+    shutil.copy2(ANCHOR_FILE, pristine_anchor)
+    if os.path.exists(ANCHORS_FILE):
+        shutil.copy2(ANCHORS_FILE, pristine_anchors)
+
+    # Attack: modify a field in block 0
+    chain = _load_chain()
+    chain[0]["user_id"] = "ATTACKER"
+    with open(LEDGER_FILE, "w") as fp:
+        json.dump(chain, fp, indent=2)
+
+    result = verify_ledger_with_anchors()
+    print(f"  Modified block 0 user_id -> 'ATTACKER'")
+    print(f"  Ledger Status : {result['ledger_status']}")
+    print(f"  Chain OK      : {result['chain_ok']}")
+    print(f"  Anchor OK     : {result['anchor_ok']}")
+    assert result["ledger_status"] == "TAMPERED", \
+        f"FAIL: Expected TAMPERED, got {result['ledger_status']}"
+    print(f"  [OK] Block modification detected: TAMPERED")
+
+    # Restore
+    shutil.copy2(pristine_ledger, LEDGER_FILE)
+    shutil.copy2(pristine_anchor, ANCHOR_FILE)
+
+    # ==================================================================
+    _separator("STEP 23: Ledger attack -- delete block")
+
+    chain = _load_chain()
+    deleted = chain.pop(1)  # remove block 1
+    with open(LEDGER_FILE, "w") as fp:
+        json.dump(chain, fp, indent=2)
+
+    result = verify_ledger_with_anchors()
+    print(f"  Deleted block 1 (was user={deleted['user_id']})")
+    print(f"  Ledger Status : {result['ledger_status']}")
+    print(f"  Chain OK      : {result['chain_ok']}")
+    assert result["ledger_status"] == "TAMPERED", \
+        f"FAIL: Expected TAMPERED, got {result['ledger_status']}"
+    print(f"  [OK] Block deletion detected: TAMPERED")
+
+    # Restore
+    shutil.copy2(pristine_ledger, LEDGER_FILE)
+    shutil.copy2(pristine_anchor, ANCHOR_FILE)
+
+    # ==================================================================
+    _separator("STEP 24: Ledger attack -- recompute hashes (anchor catch)")
+
+    # Attacker modifies block 0 AND recomputes all hashes to fix the chain
+    chain = _load_chain()
+    chain[0]["user_id"] = "ATTACKER"
+    # Recompute hash for block 0
+    chain[0]["hash"] = _compute_block_hash(chain[0])
+    # Fix linkage for all subsequent blocks
+    for i in range(1, len(chain)):
+        chain[i]["previous_hash"] = chain[i - 1]["hash"]
+        chain[i]["hash"] = _compute_block_hash(chain[i])
+    # Update the head anchor to match the new chain (attacker has disk access)
+    with open(LEDGER_FILE, "w") as fp:
+        json.dump(chain, fp, indent=2)
+    head_anchor = {
+        "latest_index": chain[-1]["index"],
+        "latest_hash": chain[-1]["hash"],
+        "chain_length": len(chain),
+    }
+    with open(ANCHOR_FILE, "w") as fp:
+        json.dump(head_anchor, fp, indent=2)
+
+    result = verify_ledger_with_anchors()
+    print(f"  Modified block 0 + recomputed ALL hashes + updated head anchor")
+    print(f"  Ledger Status : {result['ledger_status']}")
+    print(f"  Chain OK      : {result['chain_ok']}")
+    print(f"  Anchor OK     : {result['anchor_ok']}")
+    assert result["ledger_status"] == "ANCHOR_MISMATCH", \
+        f"FAIL: Expected ANCHOR_MISMATCH, got {result['ledger_status']}"
+    print(f"  [OK] Recomputed chain caught by periodic anchor: ANCHOR_MISMATCH")
+
+    # Restore everything
+    shutil.copy2(pristine_ledger, LEDGER_FILE)
+    shutil.copy2(pristine_anchor, ANCHOR_FILE)
+    if os.path.exists(pristine_anchors):
+        shutil.copy2(pristine_anchors, ANCHORS_FILE)
+
+    # Clean up pristine copies
+    for f in [pristine_ledger, pristine_anchor, pristine_anchors]:
+        if os.path.exists(f):
+            os.remove(f)
+
+    # ==================================================================
     print(f"\n{'=' * 68}")
     print(f"  ALL TESTS PASSED")
     print(f"{'=' * 68}")
@@ -451,6 +569,8 @@ def run_demo():
     print(f"  > Forensic confidence scoring validated")
     print(f"  > Tamper analysis reports generated")
     print(f"  > Ledger chain verified intact")
+    print(f"  > Ledger attack detection: modify, delete, recompute")
+    print(f"  > Periodic anchor tamper detection validated")
     print(f"{'=' * 68}\n")
 
 
