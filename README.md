@@ -140,61 +140,121 @@ python main.py demo
 
 ---
 
-## REST API Layer
+## REST API Layer (Production-Ready)
 
-SANKET exposes a high-performance REST API built with **FastAPI** for integration into external web dashboards, investigation tools, and enterprise workflows.
+SANKET exposes a high-performance, asynchronous REST API built with **FastAPI** for integration into external web dashboards, investigation tools, and enterprise workflows.
 
 ### Start the API Server
 ```bash
 uvicorn api.server:app --reload
 ```
-Interactive Swagger API documentation is available at:
-👉 **[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)**
+- **Interactive Swagger UI**: 👉 **[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)**
+- **ReDoc API Spec**: 👉 **[http://127.0.0.1:8000/redoc](http://127.0.0.1:8000/redoc)**
 
-Alternative ReDoc documentation:
-👉 **[http://127.0.0.1:8000/redoc](http://127.0.0.1:8000/redoc)**
+---
+
+### Authentication & Rate Limiting
+
+- **API Key Header**: `X-API-KEY: <key>` (or query parameter `?api_key=<key>`)
+- **Default Keys**: `sanket-admin-key-2026`, `sih-judge-key-2026`, `sanket-dev-key`
+- **Rate Limit**: 120 requests/minute per client IP (sliding window with `Retry-After` header)
+- **Traceability**: Unique `X-Request-ID` attached to all logs and response headers
+- **Audit Logs**: Stored in `data/logs/performance.log` and `data/logs/requests.jsonl`
+
+---
 
 ### API Endpoints
 
 | Method | Endpoint | Description | Input | Output |
 |---|---|---|---|---|
-| `POST` | `/encrypt` | Encrypt a PNG file for recipients | `file` (PNG upload), `recipients` ("alice,bob") | `encrypted_package_path`, `recipients` |
-| `POST` | `/decrypt` | Decrypt package as user & embed watermark | `package_path`, `user` (JSON body or form) | `watermarked_image_path`, `watermark_id`, `file_id` |
-| `POST` | `/verify` | Verify leaked file & identify source user | `file` (PNG upload) | `user`, `confidence`, `crc_status`, `verdict` |
-| `POST` | `/report` | Full forensic tamper analysis report | `file` (PNG upload) | Full forensic JSON report + saved report path |
+| `POST` | `/demo-run` | **1-Click Full SIH Judge Demo** | *None* | Complete 6-stage lifecycle JSON |
+| `GET` | `/status` | **System Health & Metrics Dashboard** | *None* | Ledger size, health, decryptions, files |
+| `POST` | `/encrypt` | Encrypt PNG for recipients (Async/Sync) | `file`, `recipients`, `?sync=true` | `job_id` (async) or `package_path` |
+| `POST` | `/decrypt` | Decrypt as user & watermark (Async/Sync) | `package_path`, `user`, `?sync=true` | `job_id` (async) or `watermarked_path` |
+| `POST` | `/verify` | Verify leaked file & identify user | `file` (PNG upload) | `user`, `confidence`, `crc_status` |
+| `POST` | `/report` | Generate forensic report (Async/Sync) | `file` (PNG upload), `?sync=true` | `job_id` (async) or full forensic JSON |
+| `GET` | `/job/{job_id}` | Check status and result of async job | `job_id` | Status (`processing`/`completed`), result |
 | `GET` | `/ledger` | Verify hash-chain & periodic anchors | *None* | `ledger_status`, `chain_ok`, `anchor_ok` |
+| `GET` | `/download/decrypted/{file}` | Secure download of watermarked image | `filename` | Image binary (`image/png`) |
+| `GET` | `/download/report/{id}` | Secure download of forensic report JSON | `report_id` | Report JSON (`application/json`) |
+| `GET` | `/download/encrypted/{pkg}` | Secure download of encrypted package | `package_name` | Package zip archive (`application/zip`) |
 
-### Example cURL Commands
+---
 
-#### 1. Encrypt File
+### How Attribution Works (Simple Explanation)
+
+1. **Decryption Provenance**: Plaintext bytes are NEVER saved to disk or returned to the user unwatermarked. During decryption, a unique 128-bit watermark ID is deterministically generated from `SHA256(user_id + file_id + timestamp + nonce)` and embedded directly into the DCT domain of the image.
+2. **Ed25519 Non-Repudiation**: The decrypting user's private key signs `{watermark_id, user_id, file_id, timestamp, nonce}`, and this record is cryptographically sealed into an append-only hash-chain ledger.
+3. **Multi-Signal Forensic Extraction**: When a suspected leak surfaces, the verification engine extracts the watermark under multiple signal transformations (original, Gaussian blur, JPEG Q85).
+4. **Resilience & Tamper Classification**:
+   - **Sync Template**: Recovers from image rotation and affine attacks.
+   - **CRC-16 Checksum**: Mathematically confirms bitstring integrity without false positives.
+   - **Heuristic Classifier**: Pinpoints whether the image was cropped, compressed, or corrupted.
+5. **Confidence Score**: Combines vote consensus (60%), CRC validity (+25%), sync score (+15%), and corruption penalties to output a forensic decision (`HIGH_CONFIDENCE`, `MEDIUM`, `LOW`, `REJECT`).
+
+---
+
+### End-to-End Demo Flow (`POST /demo-run`)
+
+Clicking **Execute** on `POST /demo-run` runs an automated 6-step lifecycle:
+```
+[Step 1: Setup Users]        --> Generates Ed25519 & X25519 keys for Alice and Bob
+[Step 2: Key-Wrapped Encrypt] --> Encrypts PNG via AES-256-GCM + X25519 ECDH
+[Step 3: Dual Decryption]    --> Alice and Bob decrypt independently; unique watermarks embedded
+[Step 4: Tamper Attack]      --> Simulates hostile crop & fill attack on Alice's file
+[Step 5: Forensic Analysis]  --> Verifies attacked file, confirms Alice as source (80%+ confidence)
+[Step 6: Ledger Audit]       --> Validates hash-chain integrity & periodic anchors
+```
+
+---
+
+### Code Examples
+
+#### cURL
 ```bash
-curl -X POST "http://127.0.0.1:8000/encrypt" \
+# 1. Run 1-Click Judge Demo
+curl -X POST "http://127.0.0.1:8000/demo-run" \
+  -H "X-API-KEY: sanket-admin-key-2026"
+
+# 2. Check System Dashboard
+curl -X GET "http://127.0.0.1:8000/status" \
+  -H "X-API-KEY: sanket-admin-key-2026"
+
+# 3. Encrypt a File (Synchronous mode)
+curl -X POST "http://127.0.0.1:8000/encrypt?sync=true" \
+  -H "X-API-KEY: sanket-admin-key-2026" \
   -F "file=@data/test_document.png" \
   -F "recipients=alice,bob"
-```
 
-#### 2. Decrypt File
-```bash
-curl -X POST "http://127.0.0.1:8000/decrypt" \
+# 4. Decrypt as Alice
+curl -X POST "http://127.0.0.1:8000/decrypt?sync=true" \
+  -H "X-API-KEY: sanket-admin-key-2026" \
   -H "Content-Type: application/json" \
   -d '{"package_path": "data/encrypted/test_document", "user": "alice"}'
-```
 
-#### 3. Verify Leaked File
-```bash
+# 5. Verify Leaked File
 curl -X POST "http://127.0.0.1:8000/verify" \
+  -H "X-API-KEY: sanket-admin-key-2026" \
   -F "file=@data/decrypted/test_document_alice_758e9fe9.png"
 ```
 
-#### 4. Generate Forensic Report
-```bash
-curl -X POST "http://127.0.0.1:8000/report" \
-  -F "file=@data/decrypted/test_document_alice_758e9fe9.png"
-```
+#### Python
+```python
+import requests
 
-#### 5. Verify Ledger
-```bash
-curl -X GET "http://127.0.0.1:8000/ledger"
+BASE = "http://127.0.0.1:8000"
+HEADERS = {"X-API-KEY": "sanket-admin-key-2026"}
+
+# 1. Run 1-Click Judge Demo
+demo_res = requests.post(f"{BASE}/demo-run", headers=HEADERS).json()
+attribution = demo_res["data"]["step_5_forensic_attribution"]
+print("Identified Leaker:", attribution["identified_user"])
+print("Confidence Score:", attribution["confidence_score"], "%")
+
+# 2. Check System Status
+status = requests.get(f"{BASE}/status", headers=HEADERS).json()
+print("System Health   :", status["data"]["system_health"])
+print("Ledger Size     :", status["data"]["ledger_size"])
 ```
 
 ---
@@ -284,9 +344,15 @@ Leaked PNG
 
 ```
 ps237/
-├── config.py                          # Global paths and constants
-├── main.py                            # CLI entry point (7 commands)
-├── requirements.txt                   # Python dependencies
+├── config.py                          # Global paths, constants, security & retention config
+├── main.py                            # CLI entry point (8 commands)
+├── requirements.txt                   # Python dependencies (FastAPI, cryptography, etc.)
+│
+├── api/                               # Production REST API layer
+│   ├── server.py                      # FastAPI server with 11 endpoints + Swagger docs
+│   ├── security.py                    # API Key auth & in-memory sliding-window rate limiter
+│   ├── jobs.py                        # Thread-safe background task queue & job manager
+│   └── cleanup.py                     # Automatic file retention & directory cleanup
 │
 ├── modules/
 │   ├── crypto/
@@ -313,15 +379,18 @@ ps237/
 │   └── helpers.py                     # File validation, ID generation, CRC-16
 │
 ├── tests/
-│   └── demo.py                        # End-to-end demo (20 test steps)
+│   └── demo.py                        # End-to-end CLI demo (24 test steps)
 │
 └── data/
     ├── keys/                          # Per-user keypairs (Ed25519 + X25519)
     ├── encrypted/                     # Encrypted packages (.enc + metadata.json)
     ├── decrypted/                     # Watermarked output PNGs
-    ├── ledger/                        # ledger.json + anchor.json + ledger_backup.json
-    └── reports/                       # Forensic JSON reports (RPT-*.json)
+    ├── ledger/                        # ledger.json + anchor.json + anchors.json
+    ├── reports/                       # Forensic JSON reports (RPT-*.json)
+    ├── uploads/                       # Temporary API upload storage
+    └── logs/                          # performance.log + requests.jsonl
 ```
+
 
 ---
 

@@ -31,3 +31,6 @@ data/keys/
 data/encrypted/
 data/decrypted/
 data/ledger/
+data/reports/
+data/uploads/
+data/logs/
