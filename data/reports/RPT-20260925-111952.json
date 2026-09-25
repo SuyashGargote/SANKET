@@ -1,0 +1,35 @@
+{
+  "report_id": "RPT-20260925-111952",
+  "generated_at": "2026-09-25T11:19:52.932545+00:00",
+  "file_path": "D:\\SIH\\ps237\\data\\uploads\\api_test_report.png",
+  "file_hash": "83474a6eddf9b6a3948b47feeb88fed6de1cd9f45609cba6a2ed17a32abf5ca2",
+  "user": "unknown",
+  "watermark_id": "00000000000000000000000000000000",
+  "status": "ledger_miss",
+  "confidence": 43.0,
+  "verdict": "LOW",
+  "reasoning": "Base 60.0/60 from vote ratio 100.0%; CRC invalid: no boost; Moderate sync (66.8%): +8; Severe corruption (53.0%): -25",
+  "crc_valid": false,
+  "vote_ratio": 1.0,
+  "sync_score": 0.6675,
+  "sync_strength": "Moderate",
+  "corruption_pct": 53.0,
+  "multi_signal_agreement": 3,
+  "multi_signal_stable": true,
+  "tamper_detected": true,
+  "tamper_type": "unknown",
+  "tamper_details": [
+    "Tampering detected but type could not be classified"
+  ],
+  "severity": "MEDIUM",
+  "ledger_valid": true,
+  "signature_valid": null,
+  "ledger_status": "VALID",
+  "anchor_valid": true,
+  "notes": [
+    "CRC mismatch — watermark may be partially corrupted",
+    "High corruption: 53.0% of blocks affected",
+    "Watermark stable across blur and JPEG perturbation",
+    "Moderate sync template (66.8%)"
+  ]
+}

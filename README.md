@@ -140,6 +140,65 @@ python main.py demo
 
 ---
 
+## REST API Layer
+
+SANKET exposes a high-performance REST API built with **FastAPI** for integration into external web dashboards, investigation tools, and enterprise workflows.
+
+### Start the API Server
+```bash
+uvicorn api.server:app --reload
+```
+Interactive Swagger API documentation is available at:
+👉 **[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)**
+
+Alternative ReDoc documentation:
+👉 **[http://127.0.0.1:8000/redoc](http://127.0.0.1:8000/redoc)**
+
+### API Endpoints
+
+| Method | Endpoint | Description | Input | Output |
+|---|---|---|---|---|
+| `POST` | `/encrypt` | Encrypt a PNG file for recipients | `file` (PNG upload), `recipients` ("alice,bob") | `encrypted_package_path`, `recipients` |
+| `POST` | `/decrypt` | Decrypt package as user & embed watermark | `package_path`, `user` (JSON body or form) | `watermarked_image_path`, `watermark_id`, `file_id` |
+| `POST` | `/verify` | Verify leaked file & identify source user | `file` (PNG upload) | `user`, `confidence`, `crc_status`, `verdict` |
+| `POST` | `/report` | Full forensic tamper analysis report | `file` (PNG upload) | Full forensic JSON report + saved report path |
+| `GET` | `/ledger` | Verify hash-chain & periodic anchors | *None* | `ledger_status`, `chain_ok`, `anchor_ok` |
+
+### Example cURL Commands
+
+#### 1. Encrypt File
+```bash
+curl -X POST "http://127.0.0.1:8000/encrypt" \
+  -F "file=@data/test_document.png" \
+  -F "recipients=alice,bob"
+```
+
+#### 2. Decrypt File
+```bash
+curl -X POST "http://127.0.0.1:8000/decrypt" \
+  -H "Content-Type: application/json" \
+  -d '{"package_path": "data/encrypted/test_document", "user": "alice"}'
+```
+
+#### 3. Verify Leaked File
+```bash
+curl -X POST "http://127.0.0.1:8000/verify" \
+  -F "file=@data/decrypted/test_document_alice_758e9fe9.png"
+```
+
+#### 4. Generate Forensic Report
+```bash
+curl -X POST "http://127.0.0.1:8000/report" \
+  -F "file=@data/decrypted/test_document_alice_758e9fe9.png"
+```
+
+#### 5. Verify Ledger
+```bash
+curl -X GET "http://127.0.0.1:8000/ledger"
+```
+
+---
+
 ## System Architecture
 
 ### Encryption & Decryption Pipeline
