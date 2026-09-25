@@ -8,13 +8,30 @@ A local, modular system that encrypts documents for multi-recipient distribution
 
 ## Quick Start
 
+### 1. Start Backend API Server
 ```bash
-# Install dependencies
+# Install Python dependencies
 pip install -r requirements.txt
 
-# Run full end-to-end demo (20 test steps)
+# Launch FastAPI server (Port 8000)
+uvicorn api.server:app --reload
+```
+- Interactive Swagger UI: 👉 **[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)**
+
+### 2. Start Frontend Web Dashboard
+```bash
+# Navigate to frontend and start Vite dev server
+cd frontend
+npm install
+npm run dev
+```
+- Interactive Web Dashboard: 👉 **[http://localhost:5173](http://localhost:5173)**
+
+### 3. Run Full CLI Demo (Terminal)
+```bash
 python main.py demo
 ```
+
 
 ---
 
