@@ -37,3 +37,8 @@ data/logs/
 data/documents/
 data/users/
 data/*.png
+*.db
+*.db-wal
+*.db-shm
+data/*.db*
+

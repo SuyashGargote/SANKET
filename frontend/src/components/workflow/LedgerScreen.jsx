@@ -9,23 +9,28 @@ import {
   Hash,
   Link,
   Lock,
+  Database,
+  Activity,
 } from 'lucide-react';
 import { api } from '../../api/client';
 
 export default function LedgerScreen() {
   const [ledgerData, setLedgerData] = useState(null);
   const [blocksData, setBlocksData] = useState([]);
+  const [auditEvents, setAuditEvents] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchLedger = async () => {
     setIsLoading(true);
     try {
-      const [status, blocksRes] = await Promise.all([
+      const [status, blocksRes, auditRes] = await Promise.all([
         api.getLedger(),
         api.getLedgerBlocks(),
+        api.getAuditEvents(20).catch(() => ({ events: [] })),
       ]);
       setLedgerData(status);
       setBlocksData(blocksRes.blocks || []);
+      setAuditEvents(auditRes.events || []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -214,6 +219,59 @@ export default function LedgerScreen() {
                     <ShieldCheck className="w-3.5 h-3.5" />
                     Multi-Sig Verified (2/2)
                   </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Local SQLite Database & Audit Trail */}
+      <div className="space-y-3 pt-4 border-t border-slate-800">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold uppercase text-slate-400 tracking-wider flex items-center gap-2">
+            <Database className="w-3.5 h-3.5 text-cyan-400" />
+            Local SQLite Database & Real-Time Audit Trail
+          </h3>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-800/80 text-cyan-300">
+            data/sanket.db (WAL Mode)
+          </span>
+        </div>
+
+        {auditEvents.length === 0 ? (
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-center text-xs text-slate-500">
+            No audit events recorded yet. Actions like Document Send and Decrypt are automatically logged here.
+          </div>
+        ) : (
+          <div className="bg-slate-900 border border-slate-800 rounded-xl divide-y divide-slate-800/80 max-h-80 overflow-y-auto">
+            {auditEvents.map((ev) => (
+              <div key={ev.id} className="p-3 text-xs flex items-center justify-between hover:bg-slate-800/30 transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className="p-1.5 rounded-lg bg-slate-950 border border-slate-800 text-cyan-400 shrink-0">
+                    <Activity className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-bold text-white uppercase text-[11px]">
+                        {ev.action}
+                      </span>
+                      {ev.user_id && (
+                        <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300">
+                          @{ev.user_id}
+                        </span>
+                      )}
+                    </div>
+                    {ev.details && typeof ev.details === 'object' && (
+                      <div className="text-[11px] text-slate-400 font-mono mt-0.5">
+                        {ev.details.filename && `File: ${ev.details.filename}`}
+                        {ev.details.recipients && ` → Recipients: [${ev.details.recipients.join(', ')}]`}
+                        {ev.details.watermark_id && `Watermark: ${ev.details.watermark_id.slice(0, 16)}...`}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="text-[10px] text-slate-500 font-mono shrink-0">
+                  {new Date(ev.timestamp).toLocaleTimeString()}
                 </div>
               </div>
             ))}

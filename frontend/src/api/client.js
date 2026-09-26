@@ -254,6 +254,18 @@ export const api = {
     return data.data || data;
   },
 
+  async getAuditEvents(limit = 50) {
+    const res = await fetch(`${getBaseUrl()}/audit/events?limit=${limit}`, {
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to fetch audit events (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
   // Helper for download URLs
   getDownloadUrl(type, identifier) {
     const base = getBaseUrl();

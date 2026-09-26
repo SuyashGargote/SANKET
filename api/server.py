@@ -77,6 +77,7 @@ from modules.ledger.hashchain import (
     verify_ledger_with_anchors,
 )
 from modules.verification.verifier import verify_leaked_file
+from modules.database.db import init_db, log_audit_event
 from modules.identity.users import (
     get_user,
     list_users,
@@ -91,9 +92,11 @@ from modules.distribution.registry import (
     list_inbox_documents,
     list_all_documents,
     authorize_document_access,
+    mark_document_decrypted,
 )
 
-# Initialize default users and keys
+# Initialize local SQLite database and default identities
+init_db()
 init_user_system()
 
 # Track server start time
@@ -282,7 +285,12 @@ async def save_uploaded_file(file: UploadFile) -> str:
             detail=f"Unsupported file type '{ext}'. Only PNG files are supported.",
         )
 
-    save_path = os.path.join(UPLOADS_DIR, clean_filename)
+    safe_filename = clean_filename
+    if os.path.exists(os.path.join(UPLOADS_DIR, safe_filename)):
+        stem, ext_part = os.path.splitext(clean_filename)
+        safe_filename = f"{stem}_{uuid.uuid4().hex[:6]}{ext_part}"
+
+    save_path = os.path.join(UPLOADS_DIR, safe_filename)
     content = await file.read()
     with open(save_path, "wb") as f:
         f.write(content)
@@ -514,6 +522,12 @@ def get_system_status(api_key: str = Depends(verify_api_key)):
         "anchor_ok": verify_res["anchor_ok"],
         "uptime_seconds": uptime_sec,
         "job_stats": job_manager.stats(),
+        "database": {
+            "engine": "SQLite3 (WAL Mode)",
+            "file": "data/sanket.db",
+            "registered_documents": len(list_all_documents()),
+            "status": "ONLINE",
+        },
         "storage": {
             "uploads": uploads_count,
             "encrypted_packages": encrypted_count,
@@ -533,6 +547,28 @@ def get_job_status(job_id: str, api_key: str = Depends(verify_api_key)):
     if not job:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found.")
     return make_response(job)
+
+
+@app.get("/audit/events", summary="List system audit trail from SQLite database", tags=["Operations"])
+def get_audit_events(limit: int = 50, api_key: str = Depends(verify_api_key)):
+    """Fetch real-time audit log events recorded in local SQLite database."""
+    from modules.database.db import get_db_connection
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM audit_events ORDER BY id DESC LIMIT ?;", (limit,))
+        events = []
+        for r in cur.fetchall():
+            d = dict(r)
+            if isinstance(d.get("details"), str):
+                try:
+                    d["details"] = json.loads(d["details"])
+                except Exception:
+                    pass
+            events.append(d)
+        return make_response({"events": events, "total": len(events)})
+    finally:
+        conn.close()
 
 
 # ── User Identity & Authentication (PART 1) ───────────────────────────────────
@@ -822,6 +858,22 @@ async def decrypt_endpoint(
         try:
             res = decrypt_file(resolved_pkg, target_user)
             run_auto_cleanup()
+            if doc_record:
+                mark_document_decrypted(
+                    doc_record["document_id"],
+                    target_user,
+                    res["watermark_id"],
+                    res["block"]["index"],
+                )
+            log_audit_event(
+                "DOCUMENT_DECRYPTED",
+                user_id=target_user,
+                document_id=doc_record["document_id"] if doc_record else str(pkg),
+                details={
+                    "watermark_id": res["watermark_id"],
+                    "ledger_block": res["block"]["index"],
+                },
+            )
             filename = os.path.basename(res["output_path"])
             result_data = {
                 "status": "success",
