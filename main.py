@@ -124,107 +124,6 @@ def cmd_decrypt(args):
     print(f"    System Sig   : {result['block']['system_signature'][:24]}...")
 
 
-def cmd_demo_flow(args):
-    """Run the interactive 8-step demonstration flow (Part 7)."""
-    from PIL import Image
-    from config import DATA_DIR, UPLOADS_DIR
-    from modules.identity.users import init_user_system, ensure_user_keys, get_user
-    from modules.distribution.registry import register_document, list_inbox_documents
-    from modules.crypto.encryption import encrypt_file
-    from modules.crypto.decryption import decrypt_file
-    from modules.verification.verifier import verify_leaked_file
-    from modules.ledger.hashchain import verify_ledger_with_anchors
-
-    print("\n" + "=" * 68)
-    print("  SANKET: 8-STAGE END-TO-END DEMO FLOW (PART 7)")
-    print("  Distribute → Authorize → Decrypt → Attribute → Verify")
-    print("=" * 68)
-
-    # 1. User A logs in
-    print("\n  [STAGE 1] User A (Alice) logs in...")
-    init_user_system()
-    ensure_user_keys("alice")
-    user_a = get_user("alice")
-    print(f"    ✓ Authenticated as: {user_a['name']} ({user_a['user_id']})")
-    print(f"      Role: {user_a['role']}")
-    print(f"      Public Key: {user_a['public_key'][:32]}...")
-
-    # 2. Sends file to User B
-    print("\n  [STAGE 2] Alice sends confidential document to Bob...")
-    sample_file = os.path.join(DATA_DIR, "test_document.png")
-    if not os.path.exists(sample_file):
-        from tests.demo import _create_test_image
-        _create_test_image(sample_file)
-    ensure_user_keys("bob")
-    pkg_dir = encrypt_file(sample_file, ["bob"])
-    doc = register_document(
-        sender="alice",
-        recipients=["bob"],
-        encrypted_package_path=pkg_dir,
-        filename="test_document.png",
-        file_size_bytes=os.path.getsize(sample_file),
-    )
-    print(f"    ✓ Document registered: {doc['document_id']}")
-    print(f"      Cipher: AES-256-GCM + Post-Quantum Kyber (ML-KEM-768)")
-    print(f"      Recipients: {', '.join(doc['recipients'])}")
-
-    # 3. User B logs in
-    print("\n  [STAGE 3] User B (Bob) logs in & checks inbox...")
-    user_b = get_user("bob")
-    inbox = list_inbox_documents("bob")
-    print(f"    ✓ Authenticated as: {user_b['name']} ({user_b['user_id']})")
-    print(f"      Inbox items: {len(inbox)} document(s)")
-    print(f"      Access Authorization: VERIFIED (Bob is in recipients)")
-
-    # 4. Decrypts file
-    print("\n  [STAGE 4] Bob decrypts document...")
-    res_b = decrypt_file(pkg_dir, "bob")
-    print(f"    ✓ Decrypted & watermarked → {res_b['output_path']}")
-    print(f"      Watermark ID : {res_b['watermark_id']}")
-    print(f"      Ledger Block : #{res_b['block']['index']}")
-    print(f"      Recipient Sig: {res_b['block']['recipient_signature'][:24]}...")
-    print(f"      System Sig   : {res_b['block']['system_signature'][:24]}...")
-
-    # 5. Simulate leak
-    print("\n  [STAGE 5] Simulating leak of Bob's copy (tamper attack)...")
-    bob_img = Image.open(res_b["output_path"]).convert("RGBA")
-    attacked_img = bob_img.copy()
-    pixels = attacked_img.load()
-    for x in range(30, 70):
-        for y in range(30, 70):
-            pixels[x, y] = (128, 128, 128, 255)
-    os.makedirs(UPLOADS_DIR, exist_ok=True)
-    leaked_path = os.path.join(UPLOADS_DIR, "demo_leaked_bob.png")
-    attacked_img.save(leaked_path)
-    print(f"    ✓ Leaked file created: {leaked_path} (40x40 area tampered)")
-
-    # 6. Upload leaked file
-    print("\n  [STAGE 6] Leaked file submitted to forensic attribution engine...")
-
-    # 7. System identifies User B
-    print("\n  [STAGE 7] Forensic attribution analysis in progress...")
-    vr = verify_leaked_file(leaked_path)
-    print(f"    ┌──────────────────────────────────────────────┐")
-    print(f"    │           FORENSIC IDENTIFICATION            │")
-    print(f"    ├──────────────────────────────────────────────┤")
-    print(f"    │  Identified Source : {vr['user']:<24}│")
-    print(f"    │  Confidence Score  : {vr['confidence']:.1f}%{'':<21}│")
-    print(f"    │  Verdict           : {vr['verdict']:<24}│")
-    print(f"    │  Tamper Detected   : {str(vr['tamper_detected']):<24}│")
-    print(f"    └──────────────────────────────────────────────┘")
-    assert vr["user"] == "bob", "Attribution failed!"
-
-    # 8. Show ledger-backed proof
-    print("\n  [STAGE 8] Cryptographic ledger-backed proof...")
-    status = verify_ledger_with_anchors()
-    print(f"    Ledger Status: {status['ledger_status']}")
-    print(f"    Chain Status : {'INTACT' if status['chain_ok'] else 'BROKEN'}")
-    print(f"    Anchors      : {'VERIFIED' if status['anchor_ok'] else 'FAILED'}")
-    print(f"    Multi-Sig    : {'VALID' if status.get('multisig_ok') else 'INVALID'}")
-    print(f"    Non-Repudiation: Established via Bob's Dilithium Signature + Gateway Signature")
-    print("\n" + "=" * 68)
-    print("  DEMO FLOW COMPLETE: NON-REPUDIABLE ATTRIBUTION PROVED!")
-    print("=" * 68 + "\n")
 
 
 def cmd_verify(args):
@@ -376,9 +275,6 @@ def main():
     # demo
     subparsers.add_parser("demo", help="Run end-to-end demo suite")
 
-    # demo-flow (Part 7)
-    subparsers.add_parser("demo-flow", help="Run 8-stage interactive demo flow (Part 7)")
-
     args = parser.parse_args()
 
     if args.command is None:
@@ -396,7 +292,6 @@ def main():
         "ledger": cmd_ledger,
         "ledger-verify": cmd_ledger_verify,
         "demo": cmd_demo,
-        "demo-flow": cmd_demo_flow,
     }
     commands[args.command](args)
 

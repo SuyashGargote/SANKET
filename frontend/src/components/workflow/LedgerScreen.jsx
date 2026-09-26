@@ -4,7 +4,6 @@ import {
   ShieldCheck,
   CheckCircle2,
   AlertTriangle,
-  RotateCcw,
   RefreshCw,
   Key,
   Hash,
@@ -17,8 +16,6 @@ export default function LedgerScreen() {
   const [ledgerData, setLedgerData] = useState(null);
   const [blocksData, setBlocksData] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [tamperAction, setTamperAction] = useState(null);
-  const [tamperResult, setTamperResult] = useState(null);
 
   const fetchLedger = async () => {
     setIsLoading(true);
@@ -39,23 +36,6 @@ export default function LedgerScreen() {
   useEffect(() => {
     fetchLedger();
   }, []);
-
-  const handleTamper = async (type) => {
-    setTamperAction(type);
-    try {
-      let res;
-      if (type === 'modify') res = await api.tamperModify();
-      else if (type === 'delete') res = await api.tamperDelete();
-      else if (type === 'recompute') res = await api.tamperRecompute();
-      else if (type === 'restore') res = await api.tamperRestore();
-      setTamperResult(res);
-      await fetchLedger();
-    } catch (err) {
-      setTamperResult({ error: err.message });
-    } finally {
-      setTamperAction(null);
-    }
-  };
 
   const isTampered =
     ledgerData?.ledger_status === 'TAMPERED' ||
@@ -149,52 +129,7 @@ export default function LedgerScreen() {
         </div>
       </div>
 
-      {/* Tamper Simulation Panel */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-            <AlertTriangle className="w-4 h-4 text-amber-400" />
-            Tamper Attack Demonstrations (Auditor Simulation)
-          </span>
-          {tamperResult && (
-            <span className="text-[11px] font-mono text-slate-400">
-              Last result: <strong className="text-white">{tamperResult.ledger_status || 'OK'}</strong>
-            </span>
-          )}
-        </div>
 
-        <div className="flex flex-wrap gap-2 text-xs">
-          <button
-            onClick={() => handleTamper('modify')}
-            disabled={Boolean(tamperAction)}
-            className="py-1.5 px-3 rounded-lg bg-slate-800 hover:bg-red-950/60 border border-slate-700 hover:border-red-700 text-slate-300 hover:text-red-300 font-semibold transition-all"
-          >
-            1. Modify Block 0
-          </button>
-          <button
-            onClick={() => handleTamper('delete')}
-            disabled={Boolean(tamperAction)}
-            className="py-1.5 px-3 rounded-lg bg-slate-800 hover:bg-red-950/60 border border-slate-700 hover:border-red-700 text-slate-300 hover:text-red-300 font-semibold transition-all"
-          >
-            2. Delete Block 1
-          </button>
-          <button
-            onClick={() => handleTamper('recompute')}
-            disabled={Boolean(tamperAction)}
-            className="py-1.5 px-3 rounded-lg bg-slate-800 hover:bg-amber-950/60 border border-slate-700 hover:border-amber-700 text-slate-300 hover:text-amber-300 font-semibold transition-all"
-          >
-            3. Recompute Hashes (Anchor Catch)
-          </button>
-          <button
-            onClick={() => handleTamper('restore')}
-            disabled={Boolean(tamperAction)}
-            className="py-1.5 px-3 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-700 text-emerald-300 font-semibold flex items-center gap-1.5 ml-auto transition-all"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            Restore Pristine Ledger
-          </button>
-        </div>
-      </div>
 
       {/* Block List */}
       <div className="space-y-3">

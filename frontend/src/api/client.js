@@ -241,21 +241,7 @@ export const api = {
     return data.data || data;
   },
 
-  // ── 7. Interactive 8-Stage Demo Flow (PART 7) ─────────────────────────────
-  async runDemoFlow() {
-    const res = await fetch(`${getBaseUrl()}/demo-flow`, {
-      method: 'POST',
-      headers: getHeaders(),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Demo flow execution failed (${res.status})`);
-    }
-    const data = await res.json();
-    return data.data || data;
-  },
-
-  // ── 8. System Status ──────────────────────────────────────────────────────
+  // ── 7. System Status ──────────────────────────────────────────────────────
   async getStatus() {
     const res = await fetch(`${getBaseUrl()}/status`, {
       headers: getHeaders(),
@@ -263,59 +249,6 @@ export const api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(err.error || `Failed to fetch status (${res.status})`);
-    }
-    const data = await res.json();
-    return data.data || data;
-  },
-
-  // ── 9. Tamper Simulations ─────────────────────────────────────────────────
-  async tamperModify() {
-    const res = await fetch(`${getBaseUrl()}/ledger/tamper/modify`, {
-      method: 'POST',
-      headers: getHeaders(),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Tamper modify failed (${res.status})`);
-    }
-    const data = await res.json();
-    return data.data || data;
-  },
-
-  async tamperDelete() {
-    const res = await fetch(`${getBaseUrl()}/ledger/tamper/delete`, {
-      method: 'POST',
-      headers: getHeaders(),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Tamper delete failed (${res.status})`);
-    }
-    const data = await res.json();
-    return data.data || data;
-  },
-
-  async tamperRecompute() {
-    const res = await fetch(`${getBaseUrl()}/ledger/tamper/recompute`, {
-      method: 'POST',
-      headers: getHeaders(),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Tamper recompute failed (${res.status})`);
-    }
-    const data = await res.json();
-    return data.data || data;
-  },
-
-  async tamperRestore() {
-    const res = await fetch(`${getBaseUrl()}/ledger/tamper/restore`, {
-      method: 'POST',
-      headers: getHeaders(),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Tamper restore failed (${res.status})`);
     }
     const data = await res.json();
     return data.data || data;

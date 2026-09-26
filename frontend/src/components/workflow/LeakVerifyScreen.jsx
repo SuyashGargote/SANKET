@@ -13,10 +13,7 @@ import { api } from '../../api/client';
 
 export default function LeakVerifyScreen({ prefillImagePath }) {
   const [file, setFile] = useState(null);
-  const [useSimulated, setUseSimulated] = useState(Boolean(prefillImagePath));
-  const [filePathInput, setFilePathInput] = useState(
-    prefillImagePath || 'data/decrypted/test_document_bob_ebe5001c.png'
-  );
+  const [filePathInput, setFilePathInput] = useState(prefillImagePath || '');
   const [isVerifying, setIsVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState(null);
   const [error, setError] = useState(null);
@@ -85,7 +82,6 @@ export default function LeakVerifyScreen({ prefillImagePath }) {
                   accept=".png"
                   onChange={(e) => {
                     setFile(e.target.files[0]);
-                    setUseSimulated(false);
                   }}
                   className="hidden"
                 />
@@ -106,7 +102,7 @@ export default function LeakVerifyScreen({ prefillImagePath }) {
               {/* Alternative: server file path */}
               <div className="pt-2">
                 <span className="text-[11px] text-slate-400 block mb-1">
-                  Or test with server file path:
+                  Or inspect existing file path:
                 </span>
                 <input
                   type="text"
@@ -115,7 +111,7 @@ export default function LeakVerifyScreen({ prefillImagePath }) {
                     setFilePathInput(e.target.value);
                     setFile(null);
                   }}
-                  placeholder="e.g. data/uploads/demo_attacked_alice.png"
+                  placeholder="e.g. data/uploads/suspect_document.png"
                   className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-blue-500"
                 />
               </div>

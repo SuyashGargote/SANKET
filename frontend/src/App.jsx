@@ -18,7 +18,6 @@ import InboxScreen from './components/workflow/InboxScreen';
 import DecryptScreen from './components/workflow/DecryptScreen';
 import LeakVerifyScreen from './components/workflow/LeakVerifyScreen';
 import LedgerScreen from './components/workflow/LedgerScreen';
-import DemoFlowModal from './components/workflow/DemoFlowModal';
 import SettingsModal from './components/SettingsModal';
 
 export default function App() {
@@ -54,7 +53,6 @@ export default function App() {
   const [prefillImagePath, setPrefillImagePath] = useState(null);
 
   // Modals
-  const [isDemoFlowOpen, setIsDemoFlowOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const fetchUsers = async () => {
@@ -149,14 +147,7 @@ export default function App() {
               </select>
             </div>
 
-            {/* 1-Click Interactive Demo Flow Button (Part 7) */}
-            <button
-              onClick={() => setIsDemoFlowOpen(true)}
-              className="py-1.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-semibold text-white flex items-center gap-1.5 shadow-sm transition-all"
-            >
-              <Play className="w-3.5 h-3.5 fill-white" />
-              <span>Demo Flow (Part 7)</span>
-            </button>
+
 
             {/* Settings */}
             <button
@@ -242,7 +233,7 @@ export default function App() {
             <DecryptScreen
               currentUser={currentUser}
               selectedDocument={selectedDocument}
-              onSimulateLeak={(imagePath) => {
+              onInspectInVerifier={(imagePath) => {
                 setPrefillImagePath(imagePath);
                 setActiveTab('leak');
               }}
@@ -277,15 +268,7 @@ export default function App() {
         </div>
       </footer>
 
-      {/* 8-Stage Interactive Demo Flow Modal (Part 7) */}
-      <DemoFlowModal
-        isOpen={isDemoFlowOpen}
-        onClose={() => setIsDemoFlowOpen(false)}
-        onRefreshData={() => {
-          fetchStatus();
-          fetchUsers();
-        }}
-      />
+
 
       {/* Settings Modal */}
       <SettingsModal
