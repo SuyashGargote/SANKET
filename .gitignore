@@ -34,3 +34,6 @@ data/ledger/
 data/reports/
 data/uploads/
 data/logs/
+data/documents/
+data/users/
+data/*.png

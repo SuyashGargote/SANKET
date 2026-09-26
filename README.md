@@ -1,485 +1,213 @@
-# SANKET: Provenance-Based Digital Forensics Using Watermarking and Decentralized Ledgers
+# SANKET — Cryptographic Attribution & Provenance Platform
 
-**Phase 1: Working Prototype with Forensic Verification Layer**  
-Smart India Hackathon (SIH) -- Problem Statement PS237
-
----
-
-## Overview
-
-SANKET is an end-to-end digital provenance, secure distribution, and forensic attribution platform designed to eliminate insider document leakage and unauthorized electronic exfiltration.
-
-The system integrates hybrid envelope encryption, secure zero-leak in-memory decryption, robust DCT-domain Quantization Index Modulation (QIM) invisible watermarking, an append-only anchored hash-chain ledger, and a multi-signal forensic verification engine. When an exfiltrated document surfaces, SANKET extracts the embedded watermark, correlates it with the ledger, verifies digital signatures, and produces a forensic-grade attribution report with confidence scoring and tamper classification -- even after JPEG compression, cropping, resizing, noise, or geometric rotation attacks.
-
-```
-+---------------------------------------------------------------------------------------------------------+
-|                                    SECURE FILE LIFECYCLE WORKFLOW                                       |
-|                                                                                                         |
-| [1. Encrypt]       --> [2. Distribute]     --> [3. Decrypt & Log]  --> [4. Leak Occurs] --> [5. Attributed]   |
-| AES-256-GCM            Multi-Recipient         Dynamic Watermark       Adversarial Attack    Multi-Signal       |
-| X25519 Key Wrap        Encrypted Package       Ed25519 Signed Block    Crop/Rotate/Compress  Forensic Report    |
-+---------------------------------------------------------------------------------------------------------+
-```
+> **Post-Quantum Secure Multi-User Document Distribution, Zero-Trust Invisible Watermarking & Multi-Signature Ledger Provenance**  
+> *Developed for Smart India Hackathon (SIH) — Problem Statement PS237*
 
 ---
 
-## Quick Start
+## 1. System Overview
 
-### 1. Launch Backend REST API (FastAPI)
+**SANKET** is an enterprise cybersecurity platform designed to eliminate document exfiltration, unauthorized leaks, and repudiation in confidential distribution networks. 
+
+Unlike traditional file-sharing or simple watermark tools, SANKET implements a closed cryptographic pipeline:
+$$\mathbf{Distribute} \longrightarrow \mathbf{Authorize} \longrightarrow \mathbf{Decrypt} \longrightarrow \mathbf{Attribute} \longrightarrow \mathbf{Verify}$$
+
+- **Single Logical Encryption**: Documents are encrypted once with AES-256-GCM; access keys are individually encapsulated per recipient using Post-Quantum KEM (**ML-KEM-768 / Kyber**).
+- **Strict Authorization Gatekeeper**: Blocks unauthorized access attempts at the API gateway with HTTP 403.
+- **Zero-Leak Invisible Watermarking**: In-memory decryption embeds a unique DCT-QIM watermark with session nonces, resilient against compression, cropping, noise, and geometric rotation attacks.
+- **Multi-Signature Ledger Consensus**: Every decryption session requires dual digital signatures (**ML-DSA-65 / Dilithium**) from both the recipient and the system gateway.
+- **Forensic Attribution Engine**: Extracts embedded watermarks from suspect documents and correlates with the ledger to provide mathematical non-repudiation and court-admissible proof.
+
+---
+
+## 2. Architecture & Pipeline
+
+```mermaid
+flowchart TD
+    subgraph Identity ["1. Identity & Key Custody Layer"]
+        U1["User: Alice (Sender)"]
+        U2["User: Bob (Recipient)"]
+        SYS["SANKET Security Gateway"]
+        KSTORE[("Local Key Store: data/keys/<br/>• ML-KEM-768 (Kyber768)<br/>• ML-DSA-65 (Dilithium3)")]
+        U1 -.-> KSTORE
+        U2 -.-> KSTORE
+        SYS -.-> KSTORE
+    end
+
+    subgraph Distribution ["2. Distribution & Authorization Layer"]
+        U1 -->|"POST /send (file + recipients)"| REG["Document Registry (registry.json)"]
+        REG -->|"Single Encrypt (AES-256-GCM)"| PKG["Encrypted Package<br/>payload.enc + metadata.json"]
+        PKG -.->|"Wrapped Key 1 (Bob)"| KEM_B["Kyber CT (Bob PK)"]
+        PKG -.->|"Wrapped Key 2 (Alice)"| KEM_A["Kyber CT (Alice PK)"]
+    end
+
+    subgraph Decrypt ["3. Decrypt & Multi-Sig Watermarking"]
+        U2 -->|"POST /decrypt (X-User-ID: bob)"| GATE{"Authorization Gate:<br/>Is Bob in recipients?"}
+        GATE -->|"Unauthorized"| DENY["403 Forbidden Access Denied"]
+        GATE -->|"Authorized"| UNWRAP["Kyber Decap (Bob SK) -> AES Key"]
+        UNWRAP --> DCT["DCT-QIM Watermark Embedding<br/>(Unique Nonce + CRC-16)"]
+        DCT --> DUALSIG["Dual Post-Quantum Signing:<br/>1. Recipient (Bob Dilithium SK)<br/>2. Gateway (System Dilithium SK)"]
+        DUALSIG --> LEDGER[("Anchored Hashchain Ledger<br/>Min. 2 Signatures Enforced")]
+    end
+
+    subgraph Forensics ["4. Forensic Attribution & Non-Repudiation"]
+        LEAK["Leaked / Attacked Document"] --> EXTRACT["DCT-QIM Extraction Engine"]
+        EXTRACT --> MATCH["Attribution Engine"]
+        MATCH -->|"100% Identity Match: Bob"| AUDIT["Multi-Sig Ledger Proof Audit"]
+        AUDIT --> PROOF["Court-Grade Cryptographic Evidence"]
+    end
+```
+
+---
+
+## 3. End-to-End User Flow (8-Stage Lifecycle)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Alice as Alice (Sender)
+    actor Bob as Bob (Recipient)
+    participant API as SANKET Gateway
+    participant PQC as Post-Quantum Engine
+    participant Ledger as Multi-Sig Ledger
+    actor Auditor as Forensic Auditor
+
+    Alice->>API: 1. Login & Authenticate (Alice Dilithium & Kyber keys)
+    Alice->>API: 2. Upload Document & Select Recipients [Bob]
+    API->>PQC: Encrypt once (AES-GCM) + Encapsulate key for Bob (ML-KEM-768)
+    API-->>Alice: Document registered & logically distributed
+
+    Bob->>API: 3. Login as Bob & View Inbox
+    API-->>Bob: List documents with Authorization status (can_decrypt: true)
+
+    Bob->>API: 4. Trigger Decryption
+    API->>API: Authorize Bob ∈ recipients
+    API->>PQC: Decapsulate AES key with Bob's Kyber Secret Key
+    API->>PQC: Embed unique DCT-QIM watermark in memory
+    API->>PQC: Sign record with Bob's Dilithium SK + Gateway Dilithium SK
+    API->>Ledger: Append dual-signed block to hash chain
+    API-->>Bob: Watermarked image + Download token
+
+    Note over Bob,Auditor: 5. Document Leaks (Adversary crops, compresses & leaks Bob's file)
+    Auditor->>API: 6. Upload Leaked Document for Investigation
+    API->>PQC: Extract 144-bit watermark across multi-signal perturbation channels
+    API->>Ledger: Query watermark ID against block history
+    API-->>Auditor: 7. Attribution Verdict: Bob identified with 80%+ confidence
+    Auditor->>Ledger: 8. Verify dual signatures & periodic anchors for non-repudiation
+```
+
+---
+
+## 4. Core Technologies & Technical Specifications
+
+| Component | Technology / Algorithm | Specification / Details |
+| :--- | :--- | :--- |
+| **Key Encapsulation** | NIST ML-KEM-768 (Kyber768) | Post-quantum KEM (`pqcrypto`); 1,184-byte PK, 2,400-byte SK, 1,088-byte CT |
+| **Digital Signatures** | NIST ML-DSA-65 (Dilithium3) | Post-quantum signature (`pqcrypto`); 1,952-byte PK, 4,032-byte SK, 3,309-byte Sig |
+| **Payload Encryption**| AES-256-GCM | Authenticated symmetric cipher with 96-bit random nonce |
+| **Watermarking** | 2D DCT-QIM on Y-channel | Mid-frequency coefficients `(2,2),(3,1),(1,3),(2,3)` with adaptive delta $38-62$ |
+| **Payload Format** | 144 bits (128-bit ID + 16-bit CRC) | 2-zone spread spectrum, 24 votes/bit, dedicated `(4,2)` sync template |
+| **Ledger Consensus** | Dual-Signed Hashchain | Minimum 2 signatures required (Recipient + Gateway), periodic secondary anchors |
+| **Backend Service** | FastAPI + Uvicorn | Python 3.12 asynchronous REST API with IP rate limiting & request tracing |
+| **Frontend UI** | React + Vite + Tailwind CSS | Workflow-driven 6-screen interface with authenticated Blob downloads |
+
+---
+
+## 5. Workflow Screens (Frontend)
+
+The frontend is structured into 6 focused workflow screens:
+
+1. **Identity & Authentication**: Select active persona (`@alice`, `@bob`, `@charlie`, `@system`), inspect Dilithium/Kyber public key fingerprints, and switch credentials.
+2. **Send Document**: Upload PNG document, choose authorized recipients, and execute single logical encryption.
+3. **Inbox**: View received documents with instant authorization status badges (`Authorized Recipient`, `Access Restricted`, `Sender Record`).
+4. **Decrypt & Watermark**: Trigger authorized post-quantum decryption, inspect unique DCT-QIM watermark ID and dual signatures, and download the watermarked asset.
+5. **Leak Verification**: Upload a suspicious/tampered document to extract the watermark, view the attribution verdict, and review confidence metrics.
+6. **Ledger Viewer**: Inspect the multi-signature hash chain, verify block linkage, and validate periodic anchor checkpoints.
+
+---
+
+## 6. Quick Start & Installation
+
+### Prerequisites
+- Python 3.11+ or 3.12+ (64-bit)
+- Node.js 18+ & npm
+
+### 1. Install Dependencies
 ```bash
-# 1. Install dependencies
+# Backend dependencies (including Post-Quantum pqcrypto)
 pip install -r requirements.txt
 
-# 2. Start server on localhost:8000
-uvicorn api.server:app --host 0.0.0.0 --port 8000 --reload
-```
-- API Base URL: `http://localhost:8000`
-- Interactive OpenAPI / Swagger UI: `http://localhost:8000/docs`
-- ReDoc API Specification: `http://localhost:8000/redoc`
-
-### 2. Launch Enterprise Web Dashboard (React + Vite)
-```bash
-# 1. Navigate to frontend directory
+# Frontend dependencies
 cd frontend
-
-# 2. Install Node packages
 npm install
-
-# 3. Start local development server (Exposed to local network / LAN)
-npx vite --host
+cd ..
 ```
-- Local Application: `http://localhost:5173`
-- Network Access (LAN): `http://<LAN_IP>:5173`
 
-### 3. Run Automated End-to-End Verification Suite (CLI)
+### 2. Launch Backend API Server
+```bash
+python -m uvicorn api.server:app --port 8000 --reload
+```
+- API Docs: `http://localhost:8000/docs`
+- Default API Key: `sanket-admin-key-2026`
+
+### 3. Launch Frontend Dashboard
+```bash
+cd frontend
+npm run dev
+```
+- Web Application: `http://localhost:5173/`
+
+---
+
+## 7. Verification & Automated Demos
+
+### A. Run 8-Stage Enterprise Lifecycle Demo
+Executes the full distribution, authorization, decryption, leak attack, attribution, and multi-sig ledger proof:
+```bash
+python main.py demo-flow
+```
+
+### B. Run 24-Step Adversarial Robustness Test
+Validates resilience against JPEG compression (Q50-Q90), noise (sigma 3-15), cropping (10-20%), rotation skew, false-positive rejection, and ledger tamper attacks:
 ```bash
 python main.py demo
 ```
-Executes a 17-step automated test harness validating encryption, dual decryption, 8 hostile attack simulations (compression, cropping, rotation, noise), tamper classification, and ledger anchor verification.
 
----
-
-## Enterprise Web Dashboard & User Workflow
-
-The web interface is designed with a clean enterprise layout, removing clutter, neon glows, and non-standard styling.
-
-```
-+-------------------------------------------------------------------------------------------------------+
-| SANKET Security Suite                                              [Simulated User: Alice | Bob]      |
-+-------------------------------------------------------------------------------------------------------+
-|  [1. Send File]       [2. My Files]           [3. Leak Investigation]       [4. Anchored Ledger]     |
-+-------------------------------------------------------------------------------------------------------+
-```
-
-### Core Workflow Tabs
-
-#### Tab 1: Send File
-- Enterprise drag-and-drop file upload for PNG documents.
-- Multi-recipient selector (`alice`, `bob`, `charlie`).
-- Client-driven AES-256-GCM payload encryption with per-recipient X25519 ECDH key wrapping.
-- Dispatched packages are automatically indexed and routed to recipient mailboxes.
-
-#### Tab 2: My Files
-- Split workspace view: **Received Files** and **Sent Files**.
-- Displays package hash, sender identity, recipient list, and creation timestamps.
-- Action button **"Open / Decrypt"** executes zero-leak in-memory decryption.
-- A unique invisible DCT watermark is embedded into the recipient's copy, signed with their Ed25519 private key, and committed to the hash chain.
-- Includes a direct **"Simulate Leak & Test Detection"** trigger from the document viewer modal.
-
-#### Tab 3: Leak Investigation
-- High-visibility forensic attribution view designed for non-technical auditors and evaluators.
-- **Centered Verdict Screen**: Displays identified source user, percentage confidence score, and status badge (`LEAK SOURCE IDENTIFIED: BOB | 94.5% CONFIDENCE`).
-- **Attack Region Visualization**: Side-by-side comparison of original watermarked document against the leaked asset, with an animated red bounding box highlighting the altered/cropped area.
-- **Three-Line Plain-Language Summary**: Explains watermark recovery, CRC validation, and mathematical non-repudiation.
-- **Collapsible Technical Telemetry**: Expandable drawer providing detailed metrics (CRC-16, Sync strength, QIM delta, 3-way multi-signal consensus).
-
-#### Tab 4: Anchored Ledger
-- **Node Chain DAG**: Interactive horizontal graph of connected blocks with directional arrows (`prev_hash -> hash`), visual anchor checkpoints, and head indicators.
-- **Audit Log Table**: Comprehensive data table with search filters (by hash, watermark ID, or user), category filters, 1-click clipboard copy, and individual block inspection.
-- **Cryptographic Block Inspector**: Inspects canonical JSON payload, Ed25519 signature proof, SHA-256 block hash, and anchor snapshot status.
-- **Adversarial Resilience Testing Suite**: Diagnostic panel to simulate real-time attacks:
-  - Vector 1: Record Mutation (modifies historical block payload -> breaks SHA-256 linkage).
-  - Vector 2: Record Deletion (removes intermediate block -> severs sequence continuity).
-  - Vector 3: History Rewrite (recalculates downstream hashes -> caught by periodic secondary anchors).
-  - Reset Action: Restores ledger state to pristine verified baseline with one click.
-
----
-
-## 10-Second Demonstration Script for Evaluators
-
-1. **Select Sender (Alice)**: Set the user switcher in the top-right header to **Alice**.
-2. **Dispatch Document**: Navigate to **"1. Send File"**, click **"Use Sample Document"**, and click **"Encrypt & Dispatch to Bob"**.
-3. **Select Recipient (Bob)**: Switch the header identity to **Bob**.
-4. **Open Document**: Navigate to **"2. My Files"** and click **"Open / Decrypt"** on the incoming file. The document renders in the secure modal, with Bob's unique watermark embedded in memory and logged to the ledger.
-5. **Simulate Leak**: Inside the viewer modal, click **"Simulate Leak & Test Detection"**.
-6. **Observe Attribution**: The interface automatically switches to **"3. Leak Investigation"** and presents the centered attribution screen identifying **Bob** as the leaker with 94%+ confidence.
-7. **Verify Ledger Audit**: Navigate to **"4. Ledger"** to see the newly appended block in the DAG. Open **"Resilience Testing"** to execute a tamper simulation and demonstrate immediate detection.
-
----
-
-## Command-Line Interface (CLI)
-
-The CLI provides complete programmatic control over all core cryptographic, watermarking, and ledger capabilities.
-
+### C. CLI Document Operations
 ```bash
-# 1. Initialize user keypairs (Ed25519 signing + X25519 key exchange)
-python main.py setup --users "alice,bob,charlie"
+# Distribute document to recipients
+python main.py send data/uploads/sample.png --recipients bob,charlie
 
-# 2. Encrypt document for multiple recipients
-python main.py encrypt --file tests/sample.png --recipients "alice,bob"
-
-# 3. Decrypt document as Bob (in-memory decrypt -> watermark -> sign -> ledger log)
-python main.py decrypt --package data/encrypted/sample --user bob
-
-# 4. Verify a suspected leaked document
-python main.py verify --file data/decrypted/sample_bob_84a3903e.png
-
-# 5. Generate full forensic analysis report (JSON output)
-python main.py report --file data/decrypted/sample_bob_84a3903e.png
-
-# 6. Verify ledger integrity and periodic secondary anchors
-python main.py ledger-verify
-
-# 7. Print chronological ledger records
-python main.py ledger
-
-# 8. Run end-to-end automated demo
-python main.py demo
-```
-
-### CLI Verification Output Example
-
-```text
-  +----------------------------------------------+
-  |        FORENSIC VERIFICATION REPORT          |
-  +----------------------------------------------+
-
-  [RESULT]
-    User        : bob
-    Confidence  : 94.5%
-    Verdict     : HIGH_CONFIDENCE
-    Status      : IDENTIFIED
-
-  [DETAILS]
-    CRC         : OK
-    Votes       : 100.0%
-    Sync        : Strong (98.5%)
-    Corruption  : None (0.0%)
-    Multi-signal: 3/3 agree
-    Tamper      : None
-
-  [NOTES]
-    * CRC checksum validated
-    * Watermark stable across Gaussian blur and JPEG perturbation
-    * Strong synchronization template match (98.5%)
-
-  LEAK SOURCE IDENTIFIED
-    User ID      : bob
-    Watermark    : 84a3903e2ee79279838d096b9fde543a
-    Timestamp    : 2026-09-25T14:28:29.303117+00:00
-    Nonce        : 7d80ecbb849c1017b6a7cda8df7e5792
+# Inspect inbox as Bob
+python main.py inbox --user bob
 ```
 
 ---
 
-## System Architecture
+## 8. REST API Reference
 
-### 1. Encryption & Zero-Leak Decryption Pipeline
-
-```
-Original Image (PNG)
-        |
-        v
-+------------------------------------+
-|  AES-256-GCM File Encryption       |
-|  Per-Recipient X25519 ECDH Wrap    |
-|  Key Derivation via HKDF-SHA256    |
-+-----------------+------------------+
-                  |
-                  v
-         Encrypted Package
-   (payload.enc + metadata.json)
-                  |
-                  v
-+------------------------------------+
-|  Secure Zero-Leak Decryption       |
-|                                    |
-|  1. AES-GCM In-Memory Decrypt      |
-|  2. Generate Unique Watermark ID   |
-|     = SHA256(user+file+time+nonce) |
-|  3. In-Memory DCT-QIM Embedding    |
-|  4. Immediate Memory Reclamation   |
-|  5. Ed25519 Record Signature       |
-|  6. Append to Hash-Chain Ledger    |
-+-----------------+------------------+
-                  |
-                  v
-        Watermarked PNG Output
-```
-
-### 2. Multi-Signal Forensic Verification Pipeline
-
-```
-Suspected Leaked Image
-        |
-        v
-+------------------------------------+
-|  Multi-Signal Watermark Extractor  |
-|  Channel 1: Original Image         |
-|  Channel 2: Gaussian Blur (3x3)    |
-|  Channel 3: JPEG Q85 Re-encode     |
-+-----------------+------------------+
-                  |
-                  v
-+------------------------------------+
-|  Signal & Distortion Analysis      |
-|  - Sync Template Correlation       |
-|  - Block Variance Corruption Ratio |
-|  - Try-and-Verify Rotation Search  |
-+-----------------+------------------+
-                  |
-                  v
-+------------------------------------+
-|  Confidence Scoring Engine         |
-|  Base Score = Vote Ratio x 60      |
-|  CRC Boost  = +25 (if valid)       |
-|  Sync Boost = +15 (if >= 75%)      |
-|  Corruption = -10 to -25 Penalty   |
-|  Verdict    = HIGH / MED / REJECT  |
-+-----------------+------------------+
-                  |
-                  v
-+------------------------------------+
-|  Ledger Query & Signature Verify   |
-|  - Match watermark_id in Ledger   |
-|  - Validate Ed25519 Signature      |
-|  - Verify Anchor Consensus         |
-+-----------------+------------------+
-                  |
-                  v
-    Structured Forensic Report
-```
+| Endpoint | Method | Purpose | Auth Headers |
+| :--- | :--- | :--- | :--- |
+| `/auth/users` | `GET` | List registered user identities and PQC public keys | `X-API-KEY` |
+| `/auth/login` | `POST` | Switch active identity session | `X-API-KEY` |
+| `/send` | `POST` | Single logical encryption & document distribution | `X-API-KEY`, `X-User-ID` |
+| `/inbox` | `GET` | List documents for current user with access checks | `X-API-KEY`, `X-User-ID` |
+| `/decrypt` | `POST` | Authorized Kyber decryption, DCT-QIM watermark & dual signing | `X-API-KEY`, `X-User-ID` |
+| `/download/decrypted/{f}`| `GET` | Authenticated watermarked image download | `X-API-KEY` / Browser link |
+| `/verify` | `POST` | Forensic watermark extraction & identity attribution | `X-API-KEY` |
+| `/ledger` | `GET` | Audit ledger integrity, multi-sigs, and periodic anchors | `X-API-KEY` |
+| `/demo-flow` | `POST` | 1-Click execution of full 8-stage provenance demo | `X-API-KEY` |
 
 ---
 
-## Technical Specifications
+## 9. Security & Compliance Notes
 
-### Cryptographic Layer
-| Function | Primitive / Algorithm | Parameter / Details |
-|---|---|---|
-| Symmetric Encryption | AES-256-GCM | 256-bit key, 96-bit random IV, authenticated tag |
-| Asymmetric Key Exchange | X25519 ECDH | Curve25519 Montgomery form, 256-bit public/private keys |
-| Key Derivation | HKDF-SHA256 | Extracts from ECDH shared secret; info: `"document-key-wrap"` |
-| Key Wrapping | AES-256-GCM | Symmetric key wrapped per recipient with unique IV |
-| Digital Signatures | Ed25519 | Edwards-curve signature over 5 canonical record fields |
-| File & Record Hashing | SHA-256 | Deterministic canonical serialization (`sort_keys=True`) |
-
-### Watermarking Engine
-| Parameter | Value | Design Rationale |
-|---|---|---|
-| Transform Domain | 2D DCT on Y-channel | Uses YCrCb; exploits human visual contrast sensitivity |
-| Block Geometry | 8x8 pixels | Standard spatial-frequency partition |
-| Embed Coefficients | (2,2), (3,1), (1,3), (2,3) | Mid-frequency band: immune to blur, preserved in JPEG |
-| Embedding Technique | QIM (Quantization Index Modulation) | Blind extraction; bounded distortion (`delta / 2`) |
-| Adaptive Delta | 38.0 to 62.0 | Scaled by block variance to maximize imperceptibility |
-| Spatial Interleaving | 2 zones | Distributes bits across distinct top/bottom halves |
-| Macro-Redundancy | 3x repetition | Watermark repeated 3 times across spatial domains |
-| Total Votes Per Bit | 24 votes / bit | 4 coefficients x 2 zones x 3 copies |
-| Payload Structure | 144 bits | 128-bit Watermark ID + 16-bit CRC-16/CCITT checksum |
-| Sync Coefficient | (4,2) (Delta = 80.0) | Dedicated pattern for rotation detection (independent of watermark) |
-| Rotation Search | +/-5.5 deg at 0.25 deg | Try-and-verify search over candidate angles on full BGR raster |
-
-### Anchored Hash-Chain Ledger
-| Feature | Implementation | Purpose |
-|---|---|---|
-| Block Chaining | SHA-256 `prev_hash` pointers | Mathematically prevents record re-ordering and deletions |
-| Signer Non-Repudiation | Ed25519 signature per block | Binds recipient identity directly to decryption event |
-| Primary Anchor | `anchor.json` | Stores latest block hash and chain length independently |
-| Secondary Anchors | `anchors.json` (Every 5 blocks) | Stores cumulative snapshot hash: `SHA256(sub_chain)` |
-| Anti-Rehash Defense | Double-layer verification | Detects attacks where downstream hashes were recalculated |
+1. **Zero Key Transmission**: Recipient private keys are stored locally on node filesystems (`data/keys/{user_id}/`) and never transmitted across the network.
+2. **Access Control Enforcement**: Attempted decryptions by non-recipients are intercepted at the server entry point with HTTP 403 before any cryptographic operations occur.
+3. **Double Anchor Consensus**: Ledger tampering is detected by both continuous block linkage (`previous_hash`) and periodic cumulative snapshot anchors (`anchors.json`), preventing history rewrites.
 
 ---
 
-## Robustness & Attack Resilience
+## 10. License
 
-Evaluated via `tests/demo.py` against adversarial perturbations:
-
-### Attack Vectors That Survive
-
-| Attack Vector | Parameter / Intensity | Extraction Confidence | CRC Status | Attribution Result |
-|---|---|---|---|---|
-| JPEG Compression | Quality 90 | 100.0% agreement | Valid | Attributed (HIGH) |
-| JPEG Compression | Quality 70 | 100.0% agreement | Valid | Attributed (HIGH) |
-| JPEG Compression | Quality 50 | 100.0% agreement | Valid | Attributed (HIGH) |
-| Resolution Resizing | Down 75% then back up | 100.0% agreement | Valid | Attributed (HIGH) |
-| Gaussian Noise | Sigma = 3.0 | 100.0% agreement | Valid | Attributed (HIGH) |
-| Gaussian Noise | Sigma = 5.0 | 100.0% agreement | Valid | Attributed (HIGH) |
-| Gaussian Noise | Sigma = 10.0 | 100.0% agreement | Valid | Attributed (HIGH) |
-| Gaussian Noise | Sigma = 15.0 | 99.3% agreement | Valid | Attributed (HIGH) |
-| Pixel Modification | 200 random pixels altered | 100.0% agreement | Valid | Attributed (HIGH) |
-| Spatial Cropping | 10% area cropped (fill) | 94.4% agreement | Valid | Attributed (HIGH) |
-| Spatial Cropping | 20% area cropped (fill) | 90.3% agreement | Valid | Attributed (HIGH) |
-| Multi-Cycle Compression | JPEG Q70 x 2 cycles | 100.0% agreement | Valid | Attributed (HIGH) |
-| Multi-Cycle Compression | JPEG Q70 x 3 cycles | 100.0% agreement | Valid | Attributed (HIGH) |
-| Combined Attack | Crop 10% + JPEG Q70 | 95.1% agreement | Valid | Attributed (HIGH) |
-| Combined Attack | Crop 10% + Noise Sigma 5 | 96.5% agreement | Valid | Attributed (HIGH) |
-| Geometric Rotation | +1.0 deg / +3.0 deg / +5.0 deg | 87.0% - 90.0% agreement | Valid | Attributed (HIGH) |
-
-### False Positive Protection Guard
-
-| Untrusted Input | System Response | Confidence Score | Verdict |
-|---|---|---|---|
-| Random Gaussian Noise Raster | Extraction rejected | 0.0% | REJECT |
-| Solid Uniform Fill Raster | All-zero detection triggered | 0.0% | REJECT |
-| Unrelated Stock Photo | No matching watermark found | 0.0% | REJECT |
-
----
-
-## REST API Reference
-
-The backend exposes a high-performance REST API built with FastAPI.
-
-- **Authentication**: `X-API-KEY: sanket-admin-key-2026` (or query parameter `?api_key=...`)
-- **Rate Limit**: 120 requests per minute per IP (sliding-window rate limiter)
-- **Traceability**: Unique `X-Request-ID` attached to all request logs and response headers
-
-### Core Endpoints
-
-| Method | Endpoint | Description | Request Format | Response Highlights |
-|---|---|---|---|---|
-| `POST` | `/encrypt` | Encrypts document for recipients | `multipart/form-data`: `file`, `recipients` | `package_path`, `recipients`, `file_id` |
-| `POST` | `/decrypt` | In-memory decrypt & watermark | `multipart/form-data`: `package_path`, `user_id` | `output_path`, `watermark_id`, `block` |
-| `POST` | `/verify` | Attributions for leaked asset | `multipart/form-data`: `file` | `user`, `confidence`, `verdict`, `crc_status` |
-| `POST` | `/report` | Full forensic JSON report | `multipart/form-data`: `file` | Detailed tamper report with severity |
-| `GET` | `/ledger` | Verifies hash-chain & anchors | None | `ledger_status`, `chain_ok`, `anchor_ok` |
-| `GET` | `/ledger/blocks` | Returns full block graph | None | Array of blocks, anchors, and status |
-| `POST` | `/ledger/tamper/modify` | Mutates Block #0 (Test Vector 1) | None | Chain break verification response |
-| `POST` | `/ledger/tamper/delete` | Deletes Block #1 (Test Vector 2) | None | Pointer gap verification response |
-| `POST` | `/ledger/tamper/recompute` | Re-hashes chain (Test Vector 3) | None | Anchor mismatch response |
-| `POST` | `/ledger/tamper/restore` | Resets ledger to pristine state | None | Consensus restored confirmation |
-| `GET` | `/shared/packages` | Lists packages for LAN sharing | None | Array of available encrypted packages |
-| `POST` | `/demo-run` | Executes 1-click judge demo | None | Complete 6-stage lifecycle execution trace |
-| `GET` | `/status` | Operational health and metrics | None | System state, total decryptions, anchor index |
-
----
-
-## Repository Layout
-
-```text
-ps237/
-|-- config.py                          # Global paths, constants, security and retention settings
-|-- main.py                            # Unified CLI entry point (8 commands)
-|-- requirements.txt                   # Production Python dependencies
-|
-|-- api/                               # FastAPI backend services
-|   |-- server.py                      # REST API routes and request lifecycle
-|   |-- security.py                    # API key authentication and IP rate limiter
-|   |-- jobs.py                        # Thread-safe async task queue and job tracker
-|   |-- cleanup.py                     # Automatic file retention and pruning
-|
-|-- modules/                           # Core algorithmic domain logic
-|   |-- crypto/
-|   |   |-- encryption.py              # AES-256-GCM encrypt and X25519 key wrapping
-|   |   |-- decryption.py              # In-memory zero-leak decryption pipeline
-|   |   |-- signature.py               # Ed25519 key management, signing, and verification
-|   |
-|   |-- watermark/
-|   |   |-- embedder.py                # DCT-QIM embedding, 2-zone spread spectrum, sync template
-|   |   |-- extractor.py               # Try-and-verify rotation recovery and extraction
-|   |
-|   |-- ledger/
-|   |   |-- hashchain.py               # Append-only hash chain, periodic anchors, integrity check
-|   |
-|   |-- verification/
-|   |   |-- verifier.py                # Forensic attribution coordinator
-|   |   |-- confidence.py              # 0-100 confidence scoring engine
-|   |   |-- forensic.py                # Multi-signal perturbation and corruption analysis
-|   |
-|   |-- forensics/
-|       |-- report.py                  # Report generator, heuristic classifier, severity scoring
-|
-|-- frontend/                          # Enterprise Web Dashboard (React + Tailwind + Vite)
-|   |-- src/
-|       |-- App.jsx                    # Core application shell and tab navigator
-|       |-- components/
-|           |-- SendFileTab.jsx        # AES-256-GCM file dropzone and recipient dispatch
-|           |-- MyFilesTab.jsx         # Received and Sent document tables with instant decryption
-|           |-- LeakInvestigationTab.jsx # Centered verdict screen and attack visualization
-|           |-- LedgerTab.jsx          # Connected node DAG, audit data table, block inspector
-|           |-- DocumentViewerModal.jsx # Secure document viewer with simulated leak trigger
-|           |-- FinalResultScreen.jsx  # Primary attribution display
-|           |-- AttackVisualization.jsx # Before/after comparison with red bounding box
-|
-|-- docs/
-|   |-- SYSTEM_ARCHITECTURE_AND_EXECUTION_GUIDE.md # Complete HLD, LLD, and Use Case specifications
-|
-|-- tests/
-|   |-- demo.py                        # Automated end-to-end CLI demonstration suite
-|
-|-- data/                              # Local repository storage
-    |-- keys/                          # User Ed25519 and X25519 PEM keys
-    |-- encrypted/                     # Encrypted packages (.enc + metadata.json)
-    |-- decrypted/                     # Watermarked recipient files
-    |-- ledger/                        # ledger.json, anchor.json, anchors.json
-    |-- reports/                       # Forensic JSON reports (RPT-*.json)
-    |-- uploads/                       # Temporary API upload cache
-    |-- logs/                          # Request traceability and performance logs
-```
-
----
-
-## Feature Implementation Status
-
-| Capability / Module | Status | Verification Reference |
-|---|---|---|
-| AES-256-GCM Authenticated Encryption | Complete | `modules/crypto/encryption.py` |
-| Per-Recipient X25519 ECDH Key Wrapping | Complete | `modules/crypto/encryption.py` |
-| HKDF-SHA256 Key Derivation | Complete | `modules/crypto/encryption.py` |
-| Secure Zero-Leak In-Memory Decryption | Complete | `modules/crypto/decryption.py` |
-| Dynamic Unique Watermark with Random Nonce | Complete | `modules/crypto/decryption.py` |
-| Multi-Coefficient Mid-Frequency DCT Embedding | Complete | `modules/watermark/embedder.py` |
-| 2-Zone Spatial Spread Spectrum | Complete | `modules/watermark/embedder.py` |
-| 24 Votes Per Watermark Bit Redundancy | Complete | `modules/watermark/embedder.py` |
-| CRC-16/CCITT Integrity Checksum | Complete | `utils/helpers.py` |
-| Deterministic (4,2) Sync Template | Complete | `modules/watermark/embedder.py` |
-| Adaptive QIM Delta (38.0 - 62.0) | Complete | `modules/watermark/embedder.py` |
-| Try-and-Verify Angular Rotation Search (+/-5.5 deg) | Complete | `modules/watermark/extractor.py` |
-| Low-Variance Block Filtering (Corruption Guard) | Complete | `modules/watermark/extractor.py` |
-| Ed25519 Canonical Record Signatures | Complete | `modules/crypto/signature.py` |
-| Append-Only Hash-Chain Ledger | Complete | `modules/ledger/hashchain.py` |
-| Periodic Snapshot Anchors (`anchors.json`) | Complete | `modules/ledger/hashchain.py` |
-| Anti-Rehash Attack Protection | Complete | `modules/ledger/hashchain.py` |
-| Multi-Signal Verification (Original, Blur, JPEG) | Complete | `modules/verification/forensic.py` |
-| 0-100 Forensic Confidence Scoring Engine | Complete | `modules/verification/confidence.py` |
-| Zero False-Positive Guard (Hard Rejection Rules) | Complete | `modules/verification/confidence.py` |
-| Heuristic Tamper Classification (Crop, Noise, Rotation) | Complete | `modules/forensics/report.py` |
-| Damage Severity Scoring (NONE, LOW, MED, HIGH) | Complete | `modules/forensics/report.py` |
-| Structured JSON Forensic Report Generation | Complete | `modules/forensics/report.py` |
-| FastAPI REST API with Background Worker Queue | Complete | `api/server.py` |
-| API Key Authentication & IP Rate Limiting | Complete | `api/security.py` |
-| Automated File Retention & Pruning | Complete | `api/cleanup.py` |
-| Enterprise Web Dashboard (React + Tailwind + Vite) | Complete | `frontend/src/App.jsx` |
-| "My Files" Secure Document Repository | Complete | `frontend/src/components/MyFilesTab.jsx` |
-| Centered Leak Result Screen | Complete | `frontend/src/components/FinalResultScreen.jsx` |
-| Visual Attack Bounding Box Overlay | Complete | `frontend/src/components/AttackVisualization.jsx` |
-| Connected Node DAG Ledger Graph | Complete | `frontend/src/components/LedgerTab.jsx` |
-| Enterprise Audit Log Data Table with Search | Complete | `frontend/src/components/LedgerTab.jsx` |
-| Cryptographic Block Inspector Modal | Complete | `frontend/src/components/LedgerTab.jsx` |
-| Adversarial Resilience & Fault Injection Suite | Complete | `frontend/src/components/LedgerTab.jsx` |
-| Persona Perspective Switcher (Alice / Bob) | Complete | `frontend/src/components/Header.jsx` |
-| Master Architecture & LLD Documentation | Complete | `docs/SYSTEM_ARCHITECTURE_AND_EXECUTION_GUIDE.md` |
-
----
-
-## Known Scope Limitations (Phase 1 Prototype)
-
-- **File Format Scope**: Phase 1 is restricted to PNG rasters. Support for JPEG, PDF, and video containers is targeted for Phase 2.
-- **Minimum Image Dimensions**: Requires at least 128x128 pixels to provide sufficient 8x8 DCT blocks for the 432-bit spread-spectrum payload.
-- **Rotation Search Range**: Rotation auto-recovery is calibrated for scanning skews within +/-5.5 degrees at 0.25-degree resolution. Gross 90/180/270-degree orientations require manual pre-rotation.
-- **Collusion Resistance**: Advanced fingerprinting schemes (Tardos codes) to withstand multiple colluding recipients merging documents are planned for Phase 2.
-
----
-
-## License
-
-Developed for the Smart India Hackathon (SIH) under Problem Statement PS237.
+Developed for the **Smart India Hackathon (SIH)** under Problem Statement **PS237**.

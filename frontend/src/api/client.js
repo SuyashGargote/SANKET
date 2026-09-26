@@ -1,5 +1,6 @@
 /**
  * API client for interacting with the SANKET FastAPI backend.
+ * Binds active user identity (X-User-ID) to prevent impersonation.
  */
 
 export const getBaseUrl = () => {
@@ -23,9 +24,18 @@ export const setApiKey = (key) => {
   localStorage.setItem('sanket_api_key', key);
 };
 
+export const getActiveUser = () => {
+  return localStorage.getItem('sanket_active_user') || 'alice';
+};
+
+export const setActiveUser = (userId) => {
+  localStorage.setItem('sanket_active_user', userId);
+};
+
 const getHeaders = (isFormData = false) => {
   const headers = {
     'X-API-KEY': getApiKey(),
+    'X-User-ID': getActiveUser(),
   };
   if (!isFormData) {
     headers['Content-Type'] = 'application/json';
@@ -34,50 +44,126 @@ const getHeaders = (isFormData = false) => {
 };
 
 export const api = {
-  // 1. System Status
-  async getStatus() {
-    const res = await fetch(`${getBaseUrl()}/status`, {
+  // ── 1. User Identity & Authentication (PART 1) ────────────────────────────
+  async getUsers() {
+    const res = await fetch(`${getBaseUrl()}/auth/users`, {
       headers: getHeaders(),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Failed to fetch status (${res.status})`);
+      throw new Error(err.error || `Failed to fetch users (${res.status})`);
     }
     const data = await res.json();
     return data.data || data;
   },
 
-  // 2. Encrypt File
-  async encrypt(file, recipients, sync = true) {
+  async login(userId) {
+    const res = await fetch(`${getBaseUrl()}/auth/login`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ user_id: userId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Login failed (${res.status})`);
+    }
+    const data = await res.json();
+    setActiveUser(userId);
+    return data.data || data;
+  },
+
+  async getCurrentUser() {
+    const res = await fetch(`${getBaseUrl()}/auth/me`, {
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to fetch current user (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
+  // ── 2. Document Distribution System (PART 2 & 3) ──────────────────────────
+  async sendDocument(file, recipients, sender = null, filePath = null) {
     const formData = new FormData();
     if (file) {
       formData.append('file', file);
     }
-    formData.append('recipients', recipients);
+    if (filePath) {
+      formData.append('file_path', filePath);
+    }
+    formData.append('recipients', Array.isArray(recipients) ? recipients.join(',') : recipients);
+    if (sender) {
+      formData.append('sender', sender);
+    }
 
-    const res = await fetch(`${getBaseUrl()}/encrypt?sync=${sync}`, {
+    const res = await fetch(`${getBaseUrl()}/send?sync=true`, {
       method: 'POST',
       headers: {
         'X-API-KEY': getApiKey(),
+        'X-User-ID': sender || getActiveUser(),
       },
       body: formData,
     });
-    if (!res.ok && res.status !== 202) {
+    if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Encryption failed (${res.status})`);
+      throw new Error(err.error || `Send failed (${res.status})`);
     }
     const data = await res.json();
-    return { statusCode: res.status, ...data };
+    return data.data || data;
   },
 
-  // 3. Decrypt File
-  async decrypt(packagePath, user, sync = true) {
+  async getInbox(user = null) {
+    const activeUid = user || getActiveUser();
+    const res = await fetch(`${getBaseUrl()}/inbox?user=${encodeURIComponent(activeUid)}`, {
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to fetch inbox (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
+  async getDocuments() {
+    const res = await fetch(`${getBaseUrl()}/documents`, {
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to fetch documents (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
+  async getDocument(docId) {
+    const res = await fetch(`${getBaseUrl()}/documents/${encodeURIComponent(docId)}`, {
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to fetch document (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
+  // ── 3. Core Decryption with Authorization & Watermarking ──────────────────
+  async decrypt(packagePathOrDocId, user = null, sync = true) {
+    const activeUid = user || getActiveUser();
     const res = await fetch(`${getBaseUrl()}/decrypt?sync=${sync}`, {
       method: 'POST',
-      headers: getHeaders(),
+      headers: {
+        'X-API-KEY': getApiKey(),
+        'X-User-ID': activeUid,
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({
-        package_path: packagePath,
-        user: user,
+        package_path: packagePathOrDocId,
+        user: activeUid,
       }),
     });
     if (!res.ok && res.status !== 202) {
@@ -88,7 +174,7 @@ export const api = {
     return { statusCode: res.status, ...data };
   },
 
-  // 4. Verify Leaked File
+  // ── 4. Leak Verification & Attribution ────────────────────────────────────
   async verify(file) {
     const formData = new FormData();
     formData.append('file', file);
@@ -97,6 +183,7 @@ export const api = {
       method: 'POST',
       headers: {
         'X-API-KEY': getApiKey(),
+        'X-User-ID': getActiveUser(),
       },
       body: formData,
     });
@@ -108,7 +195,7 @@ export const api = {
     return data.data || data;
   },
 
-  // 5. Generate Forensic Report
+  // ── 5. Forensic Report ───────────────────────────────────────────────────
   async generateReport(file, sync = true) {
     const formData = new FormData();
     formData.append('file', file);
@@ -117,6 +204,7 @@ export const api = {
       method: 'POST',
       headers: {
         'X-API-KEY': getApiKey(),
+        'X-User-ID': getActiveUser(),
       },
       body: formData,
     });
@@ -128,20 +216,7 @@ export const api = {
     return { statusCode: res.status, ...data };
   },
 
-  // 6. Job Polling
-  async getJob(jobId) {
-    const res = await fetch(`${getBaseUrl()}/job/${jobId}`, {
-      headers: getHeaders(),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Failed to fetch job (${res.status})`);
-    }
-    const data = await res.json();
-    return data.data || data;
-  },
-
-  // 7. Ledger Verification
+  // ── 6. Ledger & Multi-Signature Audit ─────────────────────────────────────
   async getLedger() {
     const res = await fetch(`${getBaseUrl()}/ledger`, {
       headers: getHeaders(),
@@ -154,21 +229,6 @@ export const api = {
     return data.data || data;
   },
 
-  // 8. SIH 1-Click Demo
-  async runDemo() {
-    const res = await fetch(`${getBaseUrl()}/demo-run`, {
-      method: 'POST',
-      headers: getHeaders(),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Demo execution failed (${res.status})`);
-    }
-    const data = await res.json();
-    return data.data || data;
-  },
-
-  // 9. Ledger Explorer Blocks
   async getLedgerBlocks() {
     const res = await fetch(`${getBaseUrl()}/ledger/blocks`, {
       headers: getHeaders(),
@@ -181,33 +241,34 @@ export const api = {
     return data.data || data;
   },
 
-  // 10. Shared Workflow - List Packages
-  async getSharedPackages() {
-    const res = await fetch(`${getBaseUrl()}/shared/packages`, {
+  // ── 7. Interactive 8-Stage Demo Flow (PART 7) ─────────────────────────────
+  async runDemoFlow() {
+    const res = await fetch(`${getBaseUrl()}/demo-flow`, {
+      method: 'POST',
       headers: getHeaders(),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Failed to fetch shared packages (${res.status})`);
+      throw new Error(err.error || `Demo flow execution failed (${res.status})`);
     }
     const data = await res.json();
     return data.data || data;
   },
 
-  // 11. Shared Workflow - List Decrypted Images
-  async getSharedDecrypted() {
-    const res = await fetch(`${getBaseUrl()}/shared/decrypted`, {
+  // ── 8. System Status ──────────────────────────────────────────────────────
+  async getStatus() {
+    const res = await fetch(`${getBaseUrl()}/status`, {
       headers: getHeaders(),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Failed to fetch shared decrypted files (${res.status})`);
+      throw new Error(err.error || `Failed to fetch status (${res.status})`);
     }
     const data = await res.json();
     return data.data || data;
   },
 
-  // 12. Tamper Simulation - Modify Block 0
+  // ── 9. Tamper Simulations ─────────────────────────────────────────────────
   async tamperModify() {
     const res = await fetch(`${getBaseUrl()}/ledger/tamper/modify`, {
       method: 'POST',
@@ -215,13 +276,12 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Failed to execute tamper modify (${res.status})`);
+      throw new Error(err.error || `Tamper modify failed (${res.status})`);
     }
     const data = await res.json();
     return data.data || data;
   },
 
-  // 13. Tamper Simulation - Delete Block 1
   async tamperDelete() {
     const res = await fetch(`${getBaseUrl()}/ledger/tamper/delete`, {
       method: 'POST',
@@ -229,13 +289,12 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Failed to execute tamper delete (${res.status})`);
+      throw new Error(err.error || `Tamper delete failed (${res.status})`);
     }
     const data = await res.json();
     return data.data || data;
   },
 
-  // 14. Tamper Simulation - Recompute Chain Hashes
   async tamperRecompute() {
     const res = await fetch(`${getBaseUrl()}/ledger/tamper/recompute`, {
       method: 'POST',
@@ -243,13 +302,12 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Failed to execute tamper recompute (${res.status})`);
+      throw new Error(err.error || `Tamper recompute failed (${res.status})`);
     }
     const data = await res.json();
     return data.data || data;
   },
 
-  // 15. Tamper Simulation - Restore Pristine Ledger
   async tamperRestore() {
     const res = await fetch(`${getBaseUrl()}/ledger/tamper/restore`, {
       method: 'POST',
@@ -257,13 +315,13 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || `Failed to restore ledger (${res.status})`);
+      throw new Error(err.error || `Tamper restore failed (${res.status})`);
     }
     const data = await res.json();
     return data.data || data;
   },
 
-  // Helper for download URLs with auth key
+  // Helper for download URLs
   getDownloadUrl(type, identifier) {
     const base = getBaseUrl();
     const key = getApiKey();

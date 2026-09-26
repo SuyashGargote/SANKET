@@ -80,6 +80,7 @@ def decrypt_file(pkg_dir: str, user_id: str) -> dict:
     private_key = load_private_key(user_id)
     signature = sign_record(record, private_key)
     record["signature"] = signature
+    record["recipient_signature"] = signature
 
     # ── Step 6: Append to ledger ──
     block = append_record(record)

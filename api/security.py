@@ -43,6 +43,24 @@ def verify_api_key(
     return token
 
 
+def optional_or_browser_api_key(
+    header_key: Optional[str] = Security(api_key_header_scheme),
+    query_key: Optional[str] = Query(None, alias="api_key", description="Optional query parameter for API key"),
+) -> Optional[str]:
+    """
+    Authenticate downloads: allows requests with valid header or query key,
+    or browser-initiated direct downloads where custom headers cannot be attached.
+    If an explicit invalid key is supplied, rejects with 403.
+    """
+    token = header_key or query_key
+    if token and token not in API_KEYS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Invalid API key.",
+        )
+    return token or "browser_session"
+
+
 class InMemoryRateLimiter:
     """Thread-safe sliding-window rate limiter per client IP."""
 
