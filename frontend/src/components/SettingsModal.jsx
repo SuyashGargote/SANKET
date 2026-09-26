@@ -80,7 +80,7 @@ export default function SettingsModal({ isOpen, onClose, onSaved }) {
               )}
             </div>
             <p className="text-[10px] text-slate-500 mt-1">
-              For LAN multi-device demo (phones/laptops), set this to your server's Wi-Fi IP (e.g. http://192.168.1.X:8000).
+              For LAN multi-device access (phones/laptops), set this to your server's Wi-Fi IP (e.g. http://192.168.1.X:8000).
             </p>
           </div>
 
