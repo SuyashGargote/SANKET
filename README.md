@@ -143,31 +143,27 @@ npm install
 cd ..
 ```
 
-### 2. Launch Backend API Server
+### 2. Launch Backend API Server (Listening on all LAN interfaces)
 ```bash
-python -m uvicorn api.server:app --port 8000 --reload
+python -m uvicorn api.server:app --host 0.0.0.0 --port 8000 --reload
 ```
 - API Docs: `http://localhost:8000/docs`
 - Default API Key: `sanket-admin-key-2026`
+- Database: Embedded SQLite with WAL mode (`data/sanket.db`)
 
-### 3. Launch Frontend Dashboard
+### 3. Launch Frontend Dashboard (LAN Accessible)
 ```bash
 cd frontend
-npm run dev
+npx vite --host
 ```
-- Web Application: `http://localhost:5173/`
+- Local Application: `http://localhost:5173/`
+- Multi-Device LAN Access: `http://<YOUR_LAN_IP>:5173/` (e.g. `http://192.168.1.4:5173/`)
 
 ---
 
 ## 7. Verification & Automated Demos
 
-### A. Run 8-Stage Enterprise Lifecycle Demo
-Executes the full distribution, authorization, decryption, leak attack, attribution, and multi-sig ledger proof:
-```bash
-python main.py demo-flow
-```
-
-### B. Run 24-Step Adversarial Robustness Test
+### A. Run 24-Step Adversarial Robustness Test
 Validates resilience against JPEG compression (Q50-Q90), noise (sigma 3-15), cropping (10-20%), rotation skew, false-positive rejection, and ledger tamper attacks:
 ```bash
 python main.py demo

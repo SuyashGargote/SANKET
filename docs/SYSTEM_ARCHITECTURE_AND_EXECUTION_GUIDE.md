@@ -234,27 +234,26 @@ npm install
 cd ..
 ```
 
-### 6.3 Running Backend API Server
+### 6.3 Running Backend API Server (Multi-Device LAN Access)
 ```bash
-python -m uvicorn api.server:app --host 127.0.0.1 --port 8000 --reload
+python -m uvicorn api.server:app --host 0.0.0.0 --port 8000 --reload
 ```
-- API Base URL: `http://localhost:8000`
+- API Base URL: `http://localhost:8000` (Local) / `http://<LAN_IP>:8000` (LAN)
 - Interactive OpenAPI Docs: `http://localhost:8000/docs`
 - Default API Key: `sanket-admin-key-2026`
+- Database: Embedded SQLite with WAL mode (`data/sanket.db`)
 
-### 6.4 Running Frontend Workflow Dashboard
+### 6.4 Running Frontend Workflow Dashboard (Multi-Device LAN Access)
 ```bash
 cd frontend
-npm run dev
+npx vite --host
 ```
-- Application UI: `http://localhost:5173/`
+- Local Application UI: `http://localhost:5173/`
+- Mobile / LAN Access: `http://<LAN_IP>:5173/` (e.g. `http://192.168.1.4:5173/`)
 
 ### 6.5 Command-Line Interface (CLI)
 ```bash
-# 1. Run 8-Stage End-to-End Enterprise Demo Flow
-python main.py demo-flow
-
-# 2. Run 24-Step Adversarial Robustness Test Suite
+# 1. Run 24-Step Adversarial Robustness Test Suite
 python main.py demo
 
 # 3. Distribute document to recipients
