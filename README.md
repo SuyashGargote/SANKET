@@ -45,11 +45,11 @@ cd frontend
 # 2. Install Node packages
 npm install
 
-# 3. Start local development server
-npm run dev -- --host
+# 3. Start local development server (Exposed to local network / LAN)
+npx vite --host
 ```
-- Web Application: `http://localhost:5173`
-- Network Access: `http://<LAN_IP>:5173`
+- Local Application: `http://localhost:5173`
+- Network Access (LAN): `http://<LAN_IP>:5173`
 
 ### 3. Run Automated End-to-End Verification Suite (CLI)
 ```bash

@@ -117,10 +117,10 @@ uvicorn api.server:app --host 0.0.0.0 --port 8000 --reload
 - **Default Authentication Keys:** `sanket-admin-key-2026`, `sih-judge-key-2026` (via header `X-API-KEY`)
 
 #### Mode D: Enterprise Web Dashboard
-Launch the Vite React frontend:
+Launch the Vite React frontend (Exposed to local network / LAN):
 ```bash
 cd frontend
-npm run dev -- --host
+npx vite --host
 ```
 - **Web Dashboard URL:** `http://localhost:5173`
 - **LAN Access:** `http://<your-lan-ip>:5173` (allows multiple physical devices on the same Wi-Fi/LAN to simulate Alice sending from Laptop A and Bob decrypting on Laptop B).
