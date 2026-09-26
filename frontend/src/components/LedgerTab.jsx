@@ -7,11 +7,8 @@ import {
   Anchor,
   CheckCircle2,
   Lock,
-  Link,
+  Link as LinkIcon,
   AlertTriangle,
-  Flame,
-  Trash2,
-  Cpu,
   RotateCcw,
   Copy,
   Check,
@@ -20,11 +17,20 @@ import {
   Hash,
   ArrowRight,
   Layers,
-  Sparkles,
-  ZapOff,
   GitCommit,
-  Split,
-  Eye,
+  Search,
+  Filter,
+  FileCode,
+  CheckCircle,
+  ExternalLink,
+  X,
+  Info,
+  Database,
+  Activity,
+  Shield,
+  FileText,
+  SlidersHorizontal,
+  ChevronRight,
 } from 'lucide-react';
 import { api } from '../api/client';
 
@@ -32,18 +38,24 @@ export default function LedgerTab() {
   const [blocksData, setBlocksData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [copiedHash, setCopiedHash] = useState(null);
-  const [viewMode, setViewMode] = useState('chain'); // 'chain' | 'cards'
+  const [copiedKey, setCopiedKey] = useState(null);
+  const [viewMode, setViewMode] = useState('chain'); // 'chain' | 'table'
+  const [selectedBlock, setSelectedBlock] = useState(null); // For Block Inspector modal
 
-  // Real-time polling state (Requirement 6)
+  // Search and filter state for audit table
+  const [searchQuery, setSearchQuery] = useState('');
+  const [userFilter, setUserFilter] = useState('ALL'); // 'ALL' | 'alice' | 'bob' | 'anchors'
+
+  // Real-time polling state
   const [liveSync, setLiveSync] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
   const prevBlockCountRef = useRef(0);
   const [hasNewBlock, setHasNewBlock] = useState(false);
 
-  // Tamper simulation state (Requirement 5)
+  // Security diagnostics / tamper simulation state
   const [tamperLoading, setTamperLoading] = useState(false);
   const [tamperFeedback, setTamperFeedback] = useState(null);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
 
   const fetchLedgerBlocks = async (isManual = false) => {
     if (isManual) setLoading(true);
@@ -81,9 +93,10 @@ export default function LedgerTab() {
   }, [liveSync]);
 
   const copyToClipboard = (text, key) => {
+    if (!text) return;
     navigator.clipboard.writeText(text);
-    setCopiedHash(key);
-    setTimeout(() => setCopiedHash(null), 2000);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 2000);
   };
 
   // Tamper Simulation Handlers
@@ -154,52 +167,83 @@ export default function LedgerTab() {
   const isChainBroken = !blocksData?.chain_ok;
 
   const blocks = blocksData?.blocks || [];
+  const anchors = blocksData?.anchors || [];
+
+  // Filter blocks for audit table view
+  const filteredBlocks = blocks.filter((b) => {
+    const matchesUser =
+      userFilter === 'ALL'
+        ? true
+        : userFilter === 'anchors'
+        ? b.is_anchor
+        : b.user_id?.toLowerCase() === userFilter.toLowerCase();
+
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return matchesUser;
+
+    const matchesQuery =
+      String(b.index).includes(q) ||
+      b.user_id?.toLowerCase().includes(q) ||
+      b.watermark_id?.toLowerCase().includes(q) ||
+      b.hash?.toLowerCase().includes(q) ||
+      b.previous_hash?.toLowerCase().includes(q);
+
+    return matchesUser && matchesQuery;
+  });
 
   return (
     <div className="space-y-6">
-      {/* Top Header & Live Sync Controls */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 glass-panel rounded-2xl border border-slate-800">
+      {/* ── 1. Top Enterprise Header & Controls ─────────────────────────────── */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-800">
         <div>
-          <div className="flex items-center space-x-2">
-            <Server className="w-6 h-6 text-cyan-400" />
-            <h2 className="text-xl font-bold text-white">
-              Ledger Explorer & Chain Visualizer
-            </h2>
-            {hasNewBlock && (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-500 text-black animate-bounce">
-                + NEW BLOCK ADDED
-              </span>
-            )}
+          <div className="flex items-center space-x-2.5">
+            <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
+              <Database className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center space-x-2">
+                <h2 className="text-xl font-bold text-white tracking-tight">
+                  Cryptographic Audit Ledger & Chain Provenance
+                </h2>
+                {hasNewBlock && (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                    + NEW BLOCK COMMITTED
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Append-only SHA-256 hash-chain with Ed25519 digital signatures and periodic state snapshots for non-repudiable auditability.
+              </p>
+            </div>
           </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Connected node chain with cryptographic SHA-256 linkages, Ed25519 digital signatures, and periodic secondary state anchors.
-          </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
+        <div className="flex flex-wrap items-center gap-2.5">
           {/* View mode toggle */}
-          <div className="flex items-center p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs font-mono">
+          <div className="flex items-center p-1 rounded-lg bg-slate-900 border border-slate-800 text-xs font-medium">
             <button
+              type="button"
               onClick={() => setViewMode('chain')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition-all ${
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md transition-colors ${
                 viewMode === 'chain'
-                  ? 'bg-cyan-600 text-white shadow'
+                  ? 'bg-blue-600 text-white shadow-sm font-semibold'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
               <GitCommit className="w-3.5 h-3.5" />
-              <span>Chain View</span>
+              <span>Node Chain</span>
             </button>
             <button
-              onClick={() => setViewMode('cards')}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition-all ${
-                viewMode === 'cards'
-                  ? 'bg-cyan-600 text-white shadow'
+              type="button"
+              onClick={() => setViewMode('table')}
+              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-md transition-colors ${
+                viewMode === 'table'
+                  ? 'bg-blue-600 text-white shadow-sm font-semibold'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
               <Layers className="w-3.5 h-3.5" />
-              <span>Block Cards</span>
+              <span>Audit Log Table</span>
             </button>
           </div>
 
@@ -207,321 +251,370 @@ export default function LedgerTab() {
           <button
             type="button"
             onClick={() => setLiveSync(!liveSync)}
-            className={`flex items-center space-x-2 px-3 py-2 rounded-xl text-xs font-mono font-semibold border transition-all ${
+            className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-xs font-mono font-medium border transition-colors ${
               liveSync
-                ? 'bg-cyan-950/80 border-cyan-500/80 text-cyan-300 shadow-md shadow-cyan-500/10'
-                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-300'
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
             }`}
           >
             <span
               className={`w-2 h-2 rounded-full ${
-                liveSync ? 'bg-cyan-400 animate-ping' : 'bg-slate-600'
+                liveSync ? 'bg-emerald-400' : 'bg-slate-500'
               }`}
             />
             <span>{liveSync ? 'Live Sync (3s)' : 'Sync Paused'}</span>
           </button>
 
-          {/* Audit Button */}
+          {/* Refresh Button */}
           <button
+            type="button"
             onClick={() => fetchLedgerBlocks(true)}
             disabled={loading}
-            className="px-3.5 py-2 rounded-xl text-xs font-semibold text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 flex items-center space-x-1.5 disabled:opacity-50"
+            className="p-2 rounded-lg text-slate-400 hover:text-white bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors disabled:opacity-50"
+            title="Refresh Ledger"
           >
             <RefreshCw
-              className={`w-3.5 h-3.5 text-cyan-400 ${loading ? 'animate-spin' : ''}`}
+              className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-blue-400' : ''}`}
             />
-            <span>Refresh</span>
+          </button>
+
+          {/* Diagnostics toggle button */}
+          <button
+            type="button"
+            onClick={() => setDiagnosticsOpen(!diagnosticsOpen)}
+            className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+              diagnosticsOpen
+                ? 'bg-slate-800 border-slate-600 text-white'
+                : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700 hover:text-white'
+            }`}
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5 text-blue-400" />
+            <span>Resilience Testing</span>
           </button>
         </div>
       </div>
 
-      {/* Critical Alert Banners (Requirement 1: When tampering occurs show broken chain & ANCHOR MISMATCH clearly) */}
-      {isAnchorMismatch && (
-        <div className="p-5 rounded-2xl bg-amber-950/90 border-2 border-amber-500 shadow-xl shadow-amber-500/20 text-amber-200 space-y-2 animate-bounce">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 rounded-xl bg-amber-500 text-black font-black">
-              <Anchor className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="text-lg font-black font-mono tracking-wide text-white uppercase">
-                🚨 ANCHOR MISMATCH DETECTED 🚨
-              </h3>
-              <p className="text-xs text-amber-300 font-semibold font-mono">
-                Periodic secondary anchor snapshot does NOT match current ledger state!
-              </p>
-            </div>
-          </div>
-          <p className="text-xs text-amber-200/90 leading-relaxed font-mono bg-black/40 p-3 rounded-xl border border-amber-500/40">
-            <strong>Adversarial Attack Caught:</strong> The attacker modified historical records and recomputed all downstream SHA-256 hashes to fake a valid chain. However, SANKET's periodic secondary anchor written to <code>anchors.json</code> caught the forgery!
-          </p>
-        </div>
-      )}
-
-      {isChainBroken && (
-        <div className="p-5 rounded-2xl bg-rose-950/90 border-2 border-rose-500 shadow-xl shadow-rose-500/25 text-rose-200 space-y-2 animate-pulse">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 rounded-xl bg-rose-500 text-white font-black">
-              <ZapOff className="w-6 h-6" />
-            </div>
-            <div>
-              <h3 className="text-lg font-black font-mono tracking-wide text-white uppercase">
-                🚨 HASH CHAIN SEVERED • TAMPER DETECTED 🚨
-              </h3>
-              <p className="text-xs text-rose-300 font-semibold font-mono">
-                Block data was altered or deleted without updating the cryptographic link!
-              </p>
-            </div>
-          </div>
-          <p className="text-xs text-rose-200/90 leading-relaxed font-mono bg-black/40 p-3 rounded-xl border border-rose-500/40">
-            <strong>Cryptographic Proof:</strong> Block #0 hash does not match Block #1's <code>prev_hash</code>. The chain is mathematically broken and invalid.
-          </p>
-        </div>
-      )}
-
-      {/* Main Ledger Status Banner */}
+      {/* ── 2. Consensus & Integrity Status Ribbon ─────────────────────────── */}
       {blocksData && (
         <div
-          className={`p-6 rounded-2xl border-2 transition-all duration-300 ${
+          className={`p-4 rounded-xl border transition-all ${
             isValid
-              ? 'bg-emerald-950/30 border-emerald-500/80 shadow-lg shadow-emerald-500/10'
-              : 'bg-rose-950/40 border-rose-500/90 shadow-xl shadow-rose-500/20'
-          } space-y-4`}
+              ? 'bg-slate-900/80 border-slate-800 text-slate-200'
+              : isAnchorMismatch
+              ? 'bg-amber-950/20 border-amber-500/40 text-amber-200'
+              : 'bg-red-950/20 border-red-500/40 text-red-200'
+          }`}
         >
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center space-x-3">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex items-start sm:items-center space-x-3.5">
               <div
-                className={`p-3 rounded-2xl ${
+                className={`p-2.5 rounded-xl shrink-0 ${
                   isValid
-                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                    : 'bg-rose-500/30 text-rose-300 border border-rose-500/60'
+                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                    : isAnchorMismatch
+                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
+                    : 'bg-red-500/10 text-red-400 border border-red-500/30'
                 }`}
               >
                 {isValid ? (
-                  <ShieldCheck className="w-7 h-7" />
+                  <ShieldCheck className="w-6 h-6" />
+                ) : isAnchorMismatch ? (
+                  <Anchor className="w-6 h-6" />
                 ) : (
-                  <ShieldAlert className="w-7 h-7" />
+                  <ShieldAlert className="w-6 h-6" />
                 )}
               </div>
+
               <div>
                 <div className="flex items-center space-x-2">
-                  <span className="text-xs font-mono uppercase tracking-wider text-slate-400">
-                    Chain Integrity Status
+                  <span className="text-[11px] font-mono uppercase tracking-wider text-slate-400">
+                    Consensus Verification
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase ${
+                      isValid
+                        ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/30'
+                        : isAnchorMismatch
+                        ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                        : 'bg-red-500/20 text-red-300 border border-red-500/40'
+                    }`}
+                  >
+                    {isValid ? 'CONSENSUS: VALID' : blocksData.ledger_status}
                   </span>
                   {lastUpdated && (
-                    <span className="text-[10px] text-slate-500 font-mono">
-                      (Checked at {lastUpdated})
+                    <span className="text-[11px] text-slate-500 font-mono hidden sm:inline">
+                      • Updated {lastUpdated}
                     </span>
                   )}
                 </div>
-                <h3
-                  className={`text-2xl font-black font-mono tracking-wide ${
-                    isValid ? 'text-emerald-400' : 'text-rose-400'
-                  }`}
-                >
-                  {blocksData.ledger_status}
-                </h3>
+
+                <p className="text-sm font-semibold text-white mt-0.5">
+                  {isValid
+                    ? `Sequential cryptographic chain intact (${blocks.length} blocks verified)`
+                    : isAnchorMismatch
+                    ? 'Secondary Anchor Discrepancy: Snapshot in anchors.json does not match ledger state'
+                    : 'Cryptographic Pointer Severed: Block hash mismatch detected in chain sequence'}
+                </p>
+
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {isValid
+                    ? 'Every block is cryptographically bound via previous_hash pointers. Digital signatures validated with Ed25519.'
+                    : isAnchorMismatch
+                    ? 'Adversarial re-computation or history rewrite caught by secondary state anchor checkpoint.'
+                    : 'One or more records were modified or deleted out of band, breaking SHA-256 link integrity.'}
+                </p>
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            {/* Metric indicators & Quick Restore */}
+            <div className="flex flex-wrap items-center gap-2 self-start lg:self-center">
               <span
-                className={`px-3 py-1.5 rounded-full text-xs font-mono font-bold border ${
+                className={`px-2.5 py-1 rounded-md text-xs font-mono font-medium border ${
                   blocksData.chain_ok
-                    ? 'bg-emerald-950 text-emerald-300 border-emerald-700'
-                    : 'bg-rose-950 text-rose-300 border-rose-700 font-black'
+                    ? 'bg-slate-900 border-slate-800 text-slate-300'
+                    : 'bg-red-500/10 border-red-500/40 text-red-300 font-bold'
                 }`}
               >
-                Hash Chain Linkage: {blocksData.chain_ok ? 'VERIFIED ✓' : 'BROKEN ✗'}
+                Hash Chain: {blocksData.chain_ok ? 'Intact ✓' : 'Broken ✗'}
               </span>
+
               <span
-                className={`px-3 py-1.5 rounded-full text-xs font-mono font-bold border ${
+                className={`px-2.5 py-1 rounded-md text-xs font-mono font-medium border ${
                   blocksData.anchor_ok
-                    ? 'bg-cyan-950 text-cyan-300 border-cyan-700'
-                    : 'bg-amber-950 text-amber-300 border-amber-700 font-black'
+                    ? 'bg-slate-900 border-slate-800 text-slate-300'
+                    : 'bg-amber-500/10 border-amber-500/40 text-amber-300 font-bold'
                 }`}
               >
-                Secondary Anchors: {blocksData.anchor_ok ? 'VERIFIED ✓' : 'MISMATCH ✗'}
+                Anchors: {blocksData.anchor_ok ? 'Synchronized ✓' : 'Mismatch ✗'}
               </span>
-              <span className="px-3 py-1.5 rounded-full text-xs font-mono bg-slate-900 text-slate-300 border border-slate-700">
-                Total Blocks: {blocks.length}
+
+              <span className="px-2.5 py-1 rounded-md text-xs font-mono bg-slate-900 border border-slate-800 text-slate-400">
+                Total: {blocks.length} blocks
               </span>
+
+              {!isValid && (
+                <button
+                  type="button"
+                  onClick={handleTamperRestore}
+                  disabled={tamperLoading}
+                  className="flex items-center space-x-1.5 px-3 py-1 rounded-md text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 transition-colors shadow-sm disabled:opacity-50"
+                >
+                  <RotateCcw
+                    className={`w-3.5 h-3.5 ${tamperLoading ? 'animate-spin' : ''}`}
+                  />
+                  <span>Restore Verified State</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
       )}
 
-      {/* Tamper Simulation Panel (Judge Evaluation Mode) */}
-      <div className="p-6 glass-panel rounded-2xl border border-slate-800 space-y-4 bg-gradient-to-br from-cyber-950/90 to-cyber-900/50">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center space-x-2.5">
-            <div className="p-2 rounded-xl bg-rose-950/60 text-rose-400 border border-rose-800/60">
-              <Flame className="w-5 h-5" />
+      {/* ── 3. Adversarial Resilience & Testing Suite (Collapsible) ────────── */}
+      {diagnosticsOpen && (
+        <div className="panel rounded-xl p-5 border border-slate-800 bg-slate-900/60 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+            <div className="flex items-center space-x-2.5">
+              <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                <Shield className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center space-x-2">
+                  <span>Adversarial Resilience & Fault Injection Suite</span>
+                  <span className="px-2 py-0.2 rounded text-[10px] font-mono uppercase bg-slate-800 text-slate-300 border border-slate-700">
+                    Diagnostic Sandbox
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Execute controlled fault-injection vectors to verify automatic detection of tampering, omissions, and history manipulation.
+                </p>
+              </div>
             </div>
+
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={handleTamperRestore}
+                disabled={tamperLoading}
+                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-emerald-300 bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-800/60 transition-colors disabled:opacity-50"
+              >
+                <RotateCcw
+                  className={`w-3.5 h-3.5 ${tamperLoading ? 'animate-spin' : ''}`}
+                />
+                <span>Reset to Verified Baseline</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setDiagnosticsOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                title="Close diagnostics"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* 3 Testing Vector Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* Vector 1: Block Mutation */}
+            <div className="panel-card rounded-lg p-4 border border-slate-800 flex flex-col justify-between space-y-3">
+              <div>
+                <div className="flex items-center justify-between text-xs font-medium text-slate-300 mb-1">
+                  <span className="font-semibold text-white">Vector 1: Record Mutation</span>
+                  <span className="text-[10px] font-mono text-slate-500">POST /tamper/modify</span>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Alters historical user payload in Block #0 without recalculating cryptographic hashes.
+                </p>
+                <p className="text-[11px] font-mono text-blue-400 mt-2">
+                  Expected outcome: Instant SHA-256 chain severance.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleTamperModify}
+                disabled={tamperLoading || blocks.length === 0}
+                className="w-full py-2 px-3 rounded-md text-xs font-semibold text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 transition-colors text-center disabled:opacity-50"
+              >
+                {tamperLoading ? 'Simulating...' : 'Inject Record Tampering'}
+              </button>
+            </div>
+
+            {/* Vector 2: Block Deletion */}
+            <div className="panel-card rounded-lg p-4 border border-slate-800 flex flex-col justify-between space-y-3">
+              <div>
+                <div className="flex items-center justify-between text-xs font-medium text-slate-300 mb-1">
+                  <span className="font-semibold text-white">Vector 2: Record Deletion</span>
+                  <span className="text-[10px] font-mono text-slate-500">POST /tamper/delete</span>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Drops an intermediate block from the ledger file to simulate omission or record loss.
+                </p>
+                <p className="text-[11px] font-mono text-blue-400 mt-2">
+                  Expected outcome: prev_hash pointer discontinuity.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleTamperDelete}
+                disabled={tamperLoading || blocks.length < 2}
+                className="w-full py-2 px-3 rounded-md text-xs font-semibold text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 transition-colors text-center disabled:opacity-50"
+              >
+                {tamperLoading ? 'Simulating...' : 'Inject Block Deletion'}
+              </button>
+            </div>
+
+            {/* Vector 3: History Rewrite (Rehash) */}
+            <div className="panel-card rounded-lg p-4 border border-slate-800 flex flex-col justify-between space-y-3">
+              <div>
+                <div className="flex items-center justify-between text-xs font-medium text-slate-300 mb-1">
+                  <span className="font-semibold text-white">Vector 3: History Rewrite</span>
+                  <span className="text-[10px] font-mono text-slate-500">POST /tamper/recompute</span>
+                </div>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Modifies Block #0 and recomputes all downstream hashes to forge a seemingly valid chain.
+                </p>
+                <p className="text-[11px] font-mono text-amber-400 mt-2">
+                  Expected outcome: Caught by periodic secondary anchor!
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleTamperRecompute}
+                disabled={tamperLoading || blocks.length === 0}
+                className="w-full py-2 px-3 rounded-md text-xs font-semibold text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 transition-colors text-center disabled:opacity-50"
+              >
+                {tamperLoading ? 'Simulating...' : 'Inject Fork / Rehash Attack'}
+              </button>
+            </div>
+          </div>
+
+          {tamperFeedback && (
+            <div className="p-3 rounded-lg bg-slate-900 border border-slate-800 text-xs font-mono text-slate-300 flex items-center justify-between">
+              <span>{tamperFeedback.message || tamperFeedback.description}</span>
+              <span className="text-[11px] text-slate-500">Status: {tamperFeedback.ledger_status}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── 4. PRIMARY VIEW 1: CONNECTED NODE CHAIN ────────────────────────── */}
+      {viewMode === 'chain' && (
+        <div className="panel rounded-xl p-5 border border-slate-800 bg-slate-900/60 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
             <div>
-              <h3 className="text-base font-bold text-white flex items-center space-x-2">
-                <span>Tamper Simulation Engine</span>
-                <span className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 font-bold">
-                  Judge Demo Mode
-                </span>
+              <h3 className="text-sm font-bold text-white flex items-center space-x-2">
+                <span>Cryptographic Sequential DAG (prev_hash → hash)</span>
               </h3>
-              <p className="text-xs text-slate-400">
-                Simulate adversarial attacks to demonstrate chain breakage and secondary anchor protection.
+              <p className="text-xs text-slate-400 mt-0.5">
+                Each block contains a cryptographically verified hash pointer linking to its direct predecessor. Click any block to inspect full JSON payload.
               </p>
             </div>
-          </div>
 
-          <button
-            type="button"
-            onClick={handleTamperRestore}
-            disabled={tamperLoading}
-            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-700/80 transition-all shadow-md shadow-emerald-950/40 disabled:opacity-50 self-start sm:self-auto"
-          >
-            <RotateCcw
-              className={`w-3.5 h-3.5 ${tamperLoading ? 'animate-spin' : ''}`}
-            />
-            <span>Restore Pristine Ledger</span>
-          </button>
-        </div>
-
-        {/* 3 Attack Simulation Buttons */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-          {/* 1. Modify Block */}
-          <button
-            type="button"
-            onClick={handleTamperModify}
-            disabled={tamperLoading || blocks.length === 0}
-            className="p-4 rounded-xl text-left bg-cyber-900/70 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-600/70 transition-all group disabled:opacity-50"
-          >
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="flex items-center space-x-2 text-rose-400 text-xs font-bold font-mono">
-                <AlertTriangle className="w-4 h-4 text-rose-500 group-hover:animate-bounce" />
-                <span>1. Modify Block</span>
-              </div>
-              <span className="text-[10px] text-slate-500 font-mono">POST</span>
-            </div>
-            <p className="text-[11px] text-slate-300 font-medium">
-              Alters Block #0 user_id without recalculating hash.
-            </p>
-            <p className="text-[10px] text-rose-400/80 mt-1 font-mono">
-              → Visually breaks the chain in RED!
-            </p>
-          </button>
-
-          {/* 2. Delete Block */}
-          <button
-            type="button"
-            onClick={handleTamperDelete}
-            disabled={tamperLoading || blocks.length < 2}
-            className="p-4 rounded-xl text-left bg-cyber-900/70 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-600/70 transition-all group disabled:opacity-50"
-          >
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="flex items-center space-x-2 text-rose-400 text-xs font-bold font-mono">
-                <Trash2 className="w-4 h-4 text-rose-500 group-hover:animate-bounce" />
-                <span>2. Delete Block</span>
-              </div>
-              <span className="text-[10px] text-slate-500 font-mono">POST</span>
-            </div>
-            <p className="text-[11px] text-slate-300 font-medium">
-              Removes Block #1 from the ledger file.
-            </p>
-            <p className="text-[10px] text-rose-400/80 mt-1 font-mono">
-              → Visually severs prev_hash link!
-            </p>
-          </button>
-
-          {/* 3. Recompute Hashes */}
-          <button
-            type="button"
-            onClick={handleTamperRecompute}
-            disabled={tamperLoading || blocks.length === 0}
-            className="p-4 rounded-xl text-left bg-cyber-900/70 hover:bg-amber-950/40 border border-slate-800 hover:border-amber-600/70 transition-all group disabled:opacity-50"
-          >
-            <div className="flex items-center justify-between mb-1.5">
-              <div className="flex items-center space-x-2 text-amber-400 text-xs font-bold font-mono">
-                <Cpu className="w-4 h-4 text-amber-400 group-hover:rotate-12 transition-transform" />
-                <span>3. Recompute Hashes</span>
-              </div>
-              <span className="text-[10px] text-slate-500 font-mono">POST</span>
-            </div>
-            <p className="text-[11px] text-slate-300 font-medium">
-              Alters Block #0 & recalculates hashes downstream.
-            </p>
-            <p className="text-[10px] text-amber-400/80 mt-1 font-mono">
-              → Triggers ANCHOR MISMATCH in GOLD/RED!
-            </p>
-          </button>
-        </div>
-      </div>
-
-      {/* Requirement 1: CONNECTED NODES CHAIN VIEW */}
-      {viewMode === 'chain' && (
-        <div className="p-6 glass-panel rounded-2xl border border-slate-800 space-y-4">
-          <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-            <div className="flex items-center space-x-2">
-              <GitCommit className="w-5 h-5 text-cyan-400" />
-              <h3 className="text-base font-bold text-white">
-                Connected Nodes Chain View (prev_hash → hash)
-              </h3>
-            </div>
-            <div className="flex items-center space-x-3 text-xs font-mono">
+            {/* Legend */}
+            <div className="flex flex-wrap items-center gap-3 text-xs font-mono text-slate-400">
               <span className="flex items-center space-x-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400" />
-                <span className="text-slate-300">Valid Chain (Green)</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span>Verified Link</span>
               </span>
               <span className="flex items-center space-x-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shadow-sm shadow-amber-400" />
-                <span className="text-amber-300 font-bold">Anchor Block (Gold)</span>
+                <span className="w-2 h-2 rounded-full bg-amber-400" />
+                <span className="text-amber-300 font-semibold">Anchor Checkpoint</span>
               </span>
               <span className="flex items-center space-x-1.5">
-                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shadow-sm shadow-rose-500" />
-                <span className="text-rose-400">Broken Link (Red)</span>
+                <span className="w-2 h-2 rounded-full bg-red-400" />
+                <span>Severed Link</span>
               </span>
             </div>
           </div>
 
-          {/* Interactive Horizontal Scrollable Connected Nodes Diagram */}
-          <div className="overflow-x-auto pb-4 pt-2 scrollbar-thin scrollbar-thumb-slate-800">
-            <div className="flex items-center space-x-2 min-w-max px-2">
+          {/* Horizontal Scrollable Connected Nodes Diagram */}
+          <div className="overflow-x-auto pb-4 pt-2">
+            <div className="flex items-center space-x-3 min-w-max px-1">
               {blocks.map((block, idx) => {
                 const isAnchor = block.is_anchor;
                 const isLatest = block.is_latest;
                 const isGenesis = block.index === 0;
 
-                // Determine if the link to this block is broken
+                // Determine if link to this block is severed
                 const isLinkBroken = !blocksData?.chain_ok && idx === 1;
 
                 return (
                   <React.Fragment key={block.hash || idx}>
-                    {/* Arrow / Link between previous block and this block */}
+                    {/* Link connector between previous block and this block */}
                     {idx > 0 && (
                       <div className="flex flex-col items-center justify-center px-1">
                         {isLinkBroken ? (
-                          /* SEVERED BROKEN CHAIN LINK (RED) */
-                          <div className="flex flex-col items-center space-y-1 animate-pulse">
-                            <div className="px-2 py-0.5 rounded bg-rose-950 border border-rose-500 text-[10px] font-mono font-bold text-rose-300">
-                              ⚡ SEVERED LINK
-                            </div>
+                          /* SEVERED LINK (RED) */
+                          <div className="flex flex-col items-center space-y-1">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-red-500/20 text-red-300 border border-red-500/40">
+                              SEVERED
+                            </span>
                             <div className="flex items-center">
-                              <div className="w-6 h-0.5 bg-rose-500 border-t-2 border-dashed border-rose-500" />
-                              <ZapOff className="w-4 h-4 text-rose-500" />
-                              <div className="w-6 h-0.5 bg-rose-500 border-t-2 border-dashed border-rose-500" />
+                              <div className="w-6 h-0.5 border-t-2 border-dashed border-red-500" />
+                              <ShieldAlert className="w-4 h-4 text-red-400 mx-0.5" />
+                              <div className="w-6 h-0.5 border-t-2 border-dashed border-red-500" />
                             </div>
-                            <span className="text-[9px] font-mono text-rose-400">
+                            <span className="text-[9px] font-mono text-red-400">
                               hash mismatch
                             </span>
                           </div>
                         ) : (
-                          /* VALID CHAIN LINK (GREEN) */
+                          /* VALID LINK (EMERALD) */
                           <div className="flex flex-col items-center space-y-1">
-                            <span className="text-[9px] font-mono text-emerald-400 font-bold">
-                              prev_hash → hash
-                            </span>
-                            <div className="flex items-center">
-                              <div className="w-10 h-0.5 bg-emerald-500 shadow-sm shadow-emerald-500/50" />
-                              <ArrowRight className="w-4 h-4 text-emerald-400 -ml-1" />
-                            </div>
                             <span className="text-[9px] font-mono text-slate-500">
-                              SHA-256 Link
+                              SHA-256
+                            </span>
+                            <div className="flex items-center text-emerald-400">
+                              <div className="w-8 h-0.5 bg-emerald-500/80" />
+                              <ArrowRight className="w-3.5 h-3.5 -ml-1 text-emerald-400" />
+                            </div>
+                            <span className="text-[9px] font-mono text-emerald-400 font-semibold">
+                              Verified
                             </span>
                           </div>
                         )}
@@ -530,84 +623,87 @@ export default function LedgerTab() {
 
                     {/* NODE CARD */}
                     <div
-                      className={`w-64 p-4 rounded-2xl border-2 transition-all flex flex-col justify-between space-y-3 shrink-0 ${
+                      onClick={() => setSelectedBlock(block)}
+                      className={`w-72 p-4 rounded-xl border transition-all cursor-pointer flex flex-col justify-between space-y-3 shrink-0 ${
                         isAnchor
-                          ? 'border-amber-400 bg-amber-950/40 text-amber-200 ring-2 ring-amber-400/40 shadow-xl shadow-amber-500/20'
+                          ? 'border-amber-500/40 bg-slate-900/90 hover:border-amber-400 shadow-sm'
                           : isLatest
-                          ? 'border-cyan-400 bg-cyber-900/90 text-cyan-200 ring-2 ring-cyan-400/40 shadow-xl shadow-cyan-500/20'
-                          : 'border-slate-800 bg-cyber-900/70 text-slate-300 hover:border-slate-700'
+                          ? 'border-blue-500/40 bg-slate-900/90 hover:border-blue-400 shadow-sm'
+                          : 'border-slate-800 bg-slate-900/60 hover:border-slate-700'
                       }`}
                     >
                       {/* Node Header */}
-                      <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                        <div className="flex items-center space-x-1.5">
-                          <span className="font-mono text-sm font-black text-white">
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                        <div className="flex items-center space-x-2">
+                          <span className="font-mono text-xs font-bold text-white">
                             BLOCK #{block.index}
                           </span>
                           {isGenesis && (
-                            <span className="px-1.5 py-0.2 rounded text-[9px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-800">
+                            <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
                               GENESIS
                             </span>
                           )}
                         </div>
 
-                        {/* Anchor Block Highlight (GOLD) */}
+                        {/* Anchor Checkpoint Tag */}
                         {isAnchor && (
-                          <span className="flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-amber-500 text-black shadow-md shadow-amber-500/40 animate-pulse">
-                            <Anchor className="w-3 h-3" />
-                            <span>ANCHOR (GOLD)</span>
+                          <span className="flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                            <Anchor className="w-3 h-3 text-amber-400" />
+                            <span>ANCHOR #{block.index}</span>
                           </span>
                         )}
 
                         {isLatest && !isAnchor && (
-                          <span className="flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-cyan-950 text-cyan-300 border border-cyan-700">
-                            <Sparkles className="w-3 h-3" />
-                            <span>HEAD</span>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-blue-500/10 text-blue-300 border border-blue-500/30">
+                            HEAD
                           </span>
                         )}
                       </div>
 
-                      {/* Operator User */}
-                      <div className="flex items-center justify-between text-xs font-mono">
+                      {/* Signer / Identity */}
+                      <div className="flex items-center justify-between text-xs">
                         <span className="text-slate-400 flex items-center space-x-1">
-                          <User className="w-3.5 h-3.5" />
-                          <span>Operator:</span>
+                          <User className="w-3 h-3" />
+                          <span>Signer:</span>
                         </span>
                         <span
-                          className={`font-bold px-2 py-0.5 rounded text-[11px] ${
+                          className={`font-semibold px-2 py-0.5 rounded text-[11px] font-mono ${
                             block.user_id === 'ATTACKER_MODIFIED' ||
                             block.user_id === 'ATTACKER_RECOMPUTED'
-                              ? 'bg-rose-950 text-rose-300 border border-rose-800 animate-pulse'
+                              ? 'bg-red-500/20 text-red-300 border border-red-500/40'
                               : block.user_id === 'alice'
-                              ? 'bg-cyan-950 text-cyan-300 border border-cyan-800'
-                              : 'bg-purple-950 text-purple-300 border border-purple-800'
+                              ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20'
+                              : 'bg-purple-500/10 text-purple-300 border border-purple-500/20'
                           }`}
                         >
                           {block.user_id}
                         </span>
                       </div>
 
-                      {/* Cryptographic Hashes (prev_hash -> hash) */}
-                      <div className="space-y-1.5 text-[10px] font-mono bg-black/50 p-2.5 rounded-xl border border-white/5">
-                        <div>
-                          <span className="text-slate-500 block">prev_hash:</span>
-                          <span className="text-slate-300 break-all truncate block" title={block.previous_hash}>
-                            {block.previous_hash ? `${block.previous_hash.slice(0, 16)}...` : '000000000000...'}
+                      {/* Cryptographic Linkage Box */}
+                      <div className="space-y-1.5 text-[10px] font-mono bg-slate-950/60 p-2.5 rounded-lg border border-slate-800/80">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-500">prev_hash:</span>
+                          <span className="text-slate-300" title={block.previous_hash}>
+                            {block.previous_hash ? `${block.previous_hash.slice(0, 12)}...` : '000000000000...'}
                           </span>
                         </div>
-                        <div className="pt-1 border-t border-white/5">
-                          <span className="text-cyan-400 font-bold block">block_hash:</span>
-                          <span className="text-white font-bold break-all truncate block" title={block.hash}>
-                            {block.hash ? `${block.hash.slice(0, 16)}...` : '--'}
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-800">
+                          <span className="text-slate-400 font-medium">block_hash:</span>
+                          <span className="text-blue-400 font-semibold" title={block.hash}>
+                            {block.hash ? `${block.hash.slice(0, 12)}...` : '--'}
                           </span>
                         </div>
                       </div>
 
-                      {/* Footer: Watermark snippet */}
-                      <div className="text-[10px] font-mono text-slate-400 flex justify-between">
-                        <span>Watermark:</span>
-                        <span className="text-indigo-300 truncate max-w-[100px]" title={block.watermark_id}>
-                          {block.watermark_id ? `${block.watermark_id.slice(0, 8)}...` : '--'}
+                      {/* Footer Info & Click hint */}
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
+                        <span className="truncate max-w-[120px]" title={block.watermark_id}>
+                          WM: {block.watermark_id ? `${block.watermark_id.slice(0, 8)}...` : '--'}
+                        </span>
+                        <span className="text-blue-400 hover:text-blue-300 flex items-center space-x-0.5 text-[10px] font-medium">
+                          <span>Inspect</span>
+                          <ChevronRight className="w-3 h-3" />
                         </span>
                       </div>
                     </div>
@@ -619,93 +715,346 @@ export default function LedgerTab() {
         </div>
       )}
 
-      {/* Detailed Block Cards View */}
-      {viewMode === 'cards' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Layers className="w-5 h-5 text-indigo-400" />
-              <h3 className="text-base font-bold text-white">
-                Detailed Block Inspection
-              </h3>
-              <span className="px-2 py-0.5 rounded-full text-xs font-mono bg-slate-800 text-slate-400">
-                {blocks.length} blocks
-              </span>
+      {/* ── 5. PRIMARY VIEW 2: ENTERPRISE AUDIT LOG TABLE ─────────────────── */}
+      {viewMode === 'table' && (
+        <div className="panel rounded-xl p-5 border border-slate-800 bg-slate-900/60 space-y-4">
+          {/* Table Search & Filter Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+            {/* Search Input */}
+            <div className="relative flex-1 max-w-sm">
+              <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Filter by hash, user, or watermark..."
+                className="w-full pl-9 pr-3 py-1.5 rounded-lg text-xs bg-slate-950 border border-slate-800 text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+              />
             </div>
-            <span className="text-xs text-slate-500 font-mono">
-              Chronological Audit Log
-            </span>
+
+            {/* Filter pills */}
+            <div className="flex items-center space-x-1.5 text-xs font-medium">
+              <span className="text-slate-500 text-[11px] mr-1">Filter:</span>
+              <button
+                type="button"
+                onClick={() => setUserFilter('ALL')}
+                className={`px-2.5 py-1 rounded-md transition-colors ${
+                  userFilter === 'ALL'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                All ({blocks.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setUserFilter('alice')}
+                className={`px-2.5 py-1 rounded-md transition-colors ${
+                  userFilter === 'alice'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                Alice ({blocks.filter((b) => b.user_id === 'alice').length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setUserFilter('bob')}
+                className={`px-2.5 py-1 rounded-md transition-colors ${
+                  userFilter === 'bob'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                Bob ({blocks.filter((b) => b.user_id === 'bob').length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setUserFilter('anchors')}
+                className={`px-2.5 py-1 rounded-md transition-colors ${
+                  userFilter === 'anchors'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                Anchors ({blocks.filter((b) => b.is_anchor).length})
+              </button>
+            </div>
           </div>
 
-          <div className="space-y-3">
-            {blocks.map((block, idx) => {
-              const isLatest = block.is_latest;
-              const isAnchor = block.is_anchor;
-              const isGenesis = block.index === 0;
+          {/* Audit Log Data Table */}
+          <div className="overflow-x-auto rounded-lg border border-slate-800">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-slate-950/80 border-b border-slate-800 text-[11px] font-mono uppercase tracking-wider text-slate-400">
+                  <th className="py-2.5 px-3">Index</th>
+                  <th className="py-2.5 px-3">Signer</th>
+                  <th className="py-2.5 px-3">Watermark ID</th>
+                  <th className="py-2.5 px-3">Block Hash (SHA-256)</th>
+                  <th className="py-2.5 px-3">Previous Hash</th>
+                  <th className="py-2.5 px-3">Anchor</th>
+                  <th className="py-2.5 px-3">Integrity</th>
+                  <th className="py-2.5 px-3 text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/80 font-mono">
+                {filteredBlocks.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-8 text-center text-slate-500 text-xs">
+                      No blocks match filter criteria.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredBlocks.map((block) => {
+                    const isAnchor = block.is_anchor;
+                    const isLatest = block.is_latest;
+                    const isGenesis = block.index === 0;
 
-              return (
-                <div
-                  key={block.hash || idx}
-                  className={`p-5 rounded-2xl border transition-all ${
-                    isAnchor
-                      ? 'bg-amber-950/30 border-amber-400/80 shadow-lg shadow-amber-500/10'
-                      : isLatest
-                      ? 'bg-cyber-900/90 border-cyan-500/80 shadow-xl shadow-cyan-500/10 ring-1 ring-cyan-500/40'
-                      : 'bg-cyber-900/60 border-slate-800 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-800/80">
-                    <div className="flex items-center space-x-3">
-                      <span className="font-mono text-base font-black text-white">
-                        BLOCK #{block.index}
-                      </span>
-                      {isGenesis && (
-                        <span className="px-2 py-0.5 text-[10px] font-mono font-bold uppercase rounded bg-emerald-950 text-emerald-300 border border-emerald-800">
-                          Genesis Block
-                        </span>
-                      )}
-                      {isAnchor && (
-                        <span className="flex items-center space-x-1 px-2.5 py-0.5 text-[10px] font-mono font-bold uppercase rounded bg-amber-500 text-black shadow-md shadow-amber-500/20">
-                          <Anchor className="w-3 h-3" />
-                          <span>Anchor Block (Gold)</span>
-                        </span>
-                      )}
-                      {isLatest && (
-                        <span className="px-2.5 py-0.5 text-[10px] font-mono font-bold uppercase rounded bg-cyan-950 text-cyan-300 border border-cyan-700">
-                          Latest Head
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-xs text-slate-400 font-mono">
-                      {block.timestamp ? new Date(block.timestamp).toLocaleString() : '--'}
-                    </span>
-                  </div>
+                    return (
+                      <tr
+                        key={block.hash || block.index}
+                        className="hover:bg-slate-800/30 transition-colors"
+                      >
+                        <td className="py-2.5 px-3 font-bold text-white">
+                          #{block.index}
+                          {isGenesis && (
+                            <span className="ml-1 text-[9px] px-1 py-0.2 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                              GEN
+                            </span>
+                          )}
+                          {isLatest && !isGenesis && (
+                            <span className="ml-1 text-[9px] px-1 py-0.2 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                              HEAD
+                            </span>
+                          )}
+                        </td>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3 text-xs font-mono">
-                    <div className="space-y-2">
-                      <div className="flex justify-between p-2.5 rounded bg-black/40 border border-slate-800">
-                        <span className="text-slate-400">User ID:</span>
-                        <span className="text-white font-bold">{block.user_id}</span>
-                      </div>
-                      <div className="flex justify-between p-2.5 rounded bg-black/40 border border-slate-800">
-                        <span className="text-slate-400">Watermark ID:</span>
-                        <span className="text-indigo-300 break-all">{block.watermark_id}</span>
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <div className="p-2.5 rounded bg-black/40 border border-slate-800">
-                        <span className="text-cyan-400 block text-[10px]">Hash (SHA-256):</span>
-                        <span className="text-white break-all text-[11px]">{block.hash}</span>
-                      </div>
-                      <div className="p-2.5 rounded bg-black/40 border border-slate-800">
-                        <span className="text-slate-500 block text-[10px]">Previous Hash:</span>
-                        <span className="text-slate-300 break-all text-[11px]">{block.previous_hash}</span>
-                      </div>
-                    </div>
-                  </div>
+                        <td className="py-2.5 px-3 font-sans">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[11px] font-medium ${
+                              block.user_id === 'alice'
+                                ? 'bg-blue-500/10 text-blue-300'
+                                : block.user_id === 'bob'
+                                ? 'bg-purple-500/10 text-purple-300'
+                                : 'bg-red-500/20 text-red-300 font-bold'
+                            }`}
+                          >
+                            {block.user_id}
+                          </span>
+                        </td>
+
+                        <td className="py-2.5 px-3 text-slate-300">
+                          <div className="flex items-center space-x-1.5">
+                            <span>{block.watermark_id ? `${block.watermark_id.slice(0, 10)}...` : '--'}</span>
+                            {block.watermark_id && (
+                              <button
+                                type="button"
+                                onClick={() => copyToClipboard(block.watermark_id, `wm-${block.index}`)}
+                                className="text-slate-500 hover:text-slate-300 p-0.5"
+                                title="Copy Watermark ID"
+                              >
+                                {copiedKey === `wm-${block.index}` ? (
+                                  <Check className="w-3 h-3 text-emerald-400" />
+                                ) : (
+                                  <Copy className="w-3 h-3" />
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+
+                        <td className="py-2.5 px-3 text-blue-400 font-semibold">
+                          <div className="flex items-center space-x-1.5">
+                            <span>{block.hash ? `${block.hash.slice(0, 12)}...` : '--'}</span>
+                            {block.hash && (
+                              <button
+                                type="button"
+                                onClick={() => copyToClipboard(block.hash, `hash-${block.index}`)}
+                                className="text-slate-500 hover:text-slate-300 p-0.5"
+                                title="Copy Block Hash"
+                              >
+                                {copiedKey === `hash-${block.index}` ? (
+                                  <Check className="w-3 h-3 text-emerald-400" />
+                                ) : (
+                                  <Copy className="w-3 h-3" />
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+
+                        <td className="py-2.5 px-3 text-slate-400">
+                          {block.previous_hash ? `${block.previous_hash.slice(0, 10)}...` : '0000000000...'}
+                        </td>
+
+                        <td className="py-2.5 px-3">
+                          {isAnchor ? (
+                            <span className="flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                              <Anchor className="w-3 h-3" />
+                              <span>Checkpoint</span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-500 text-[11px]">—</span>
+                          )}
+                        </td>
+
+                        <td className="py-2.5 px-3">
+                          <span className="flex items-center space-x-1 text-emerald-400 text-xs">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>Signed</span>
+                          </span>
+                        </td>
+
+                        <td className="py-2.5 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedBlock(block)}
+                            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors text-[11px] font-sans font-medium"
+                          >
+                            Inspect
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── 6. BLOCK INSPECTOR MODAL ────────────────────────────────────────── */}
+      {selectedBlock && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl p-6 space-y-5">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  <Database className="w-5 h-5" />
                 </div>
-              );
-            })}
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h3 className="text-base font-bold text-white">
+                      Block #{selectedBlock.index} Cryptographic Inspector
+                    </h3>
+                    {selectedBlock.is_anchor && (
+                      <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                        ANCHOR CHECKPOINT
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Canonical record payload and cryptographic attestation proof.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedBlock(null)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Verification Badges */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs font-mono">
+              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-0.5">
+                <span className="text-[10px] uppercase text-slate-500 block">Signer Identity</span>
+                <span className="text-white font-bold">{selectedBlock.user_id} (Ed25519)</span>
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-0.5">
+                <span className="text-[10px] uppercase text-slate-500 block">Hash Algorithm</span>
+                <span className="text-emerald-400 font-bold">SHA-256 (Canonical)</span>
+              </div>
+              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-0.5">
+                <span className="text-[10px] uppercase text-slate-500 block">State Anchor</span>
+                <span className={selectedBlock.is_anchor ? 'text-amber-300 font-bold' : 'text-slate-400'}>
+                  {selectedBlock.is_anchor ? 'Anchored (Snapshot #5)' : 'Chained Standard'}
+                </span>
+              </div>
+            </div>
+
+            {/* Key Fields */}
+            <div className="space-y-2 text-xs font-mono">
+              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
+                <span className="text-slate-400">Timestamp:</span>
+                <span className="text-slate-200">
+                  {selectedBlock.timestamp ? new Date(selectedBlock.timestamp).toUTCString() : '--'}
+                </span>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
+                <span className="text-slate-400">Watermark ID:</span>
+                <span className="text-purple-300 break-all">{selectedBlock.watermark_id || '--'}</span>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between">
+                <span className="text-slate-400">Nonce:</span>
+                <span className="text-slate-300 break-all">{selectedBlock.nonce || '--'}</span>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-1">
+                <span className="text-slate-400 block">Block Hash:</span>
+                <span className="text-blue-400 font-semibold break-all text-[11px] block">{selectedBlock.hash}</span>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-1">
+                <span className="text-slate-400 block">Previous Hash:</span>
+                <span className="text-slate-300 break-all text-[11px] block">{selectedBlock.previous_hash}</span>
+              </div>
+
+              {selectedBlock.signature && (
+                <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-1">
+                  <span className="text-slate-400 block">Ed25519 Digital Signature:</span>
+                  <span className="text-emerald-400/90 break-all text-[11px] block">
+                    {selectedBlock.signature}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Canonical Raw JSON */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-slate-300">Raw Canonical JSON Payload:</span>
+                <button
+                  type="button"
+                  onClick={() => copyToClipboard(JSON.stringify(selectedBlock, null, 2), 'raw-json')}
+                  className="flex items-center space-x-1 text-blue-400 hover:text-blue-300 text-[11px]"
+                >
+                  {copiedKey === 'raw-json' ? (
+                    <>
+                      <Check className="w-3 h-3 text-emerald-400" />
+                      <span className="text-emerald-400 font-bold">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3 h-3" />
+                      <span>Copy JSON</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <pre className="p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-300 overflow-x-auto max-h-48 scrollbar-thin">
+                {JSON.stringify(selectedBlock, null, 2)}
+              </pre>
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setSelectedBlock(null)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-white bg-slate-800 hover:bg-slate-700 transition-colors"
+              >
+                Close Inspector
+              </button>
+            </div>
           </div>
         </div>
       )}
