@@ -1,752 +1,323 @@
-# SANKET — Provenance-Based Digital Forensics Using Watermarking and Decentralized Ledgers
-## Comprehensive System Specification, Architecture (HLD/LLD), Use Cases & Execution Guide
+# SANKET: System Architecture & Execution Guide
+## Cryptographic Attribution & Provenance Platform (SIH Problem Statement PS237)
 
 ---
 
-## 1. Executive Summary & Problem Statement
+## 1. Executive Summary & Paradigm Shift
 
-### 1.1 Context & Problem Statement (SIH PS237)
-In modern defense, intelligence, healthcare, and enterprise environments, sensitive electronic documents (confidential briefings, trade secrets, medical records, blueprints) must be shared with multiple authorized parties. When a document is leaked—either through an insider threat, accidental disclosure, or malicious exfiltration—traditional Digital Rights Management (DRM) and access control lists fail because:
-1. **The Screen Capture / Exfiltration Gap:** Once a document is decrypted on a recipient's screen, DRM can be circumvented via screenshots, camera photos, or exported raw rasters.
-2. **Repudiation & Plausible Deniability:** Without non-repudiable cryptographic proof linked to individual recipient identities, suspected insiders can claim that a leaked copy was shared by someone else or that an administrator modified the access logs.
-3. **Adversarial Image Manipulation:** Exfiltrated images are routinely processed by adversaries using lossy compression (JPEG, WebP), spatial cropping, additive sensor noise, resizing, and rotation (scanning skew) to destroy forensic markers.
-4. **Log Tampering:** Centralized databases and mutable access logs can be altered by compromised system administrators or attackers with root privileges to erase audit trails.
+**SANKET** is a zero-trust, post-quantum secure document distribution and forensic attribution platform designed to eliminate insider exfiltration, document leakage, and plausible deniability.
 
-### 1.2 The SANKET Solution
-**SANKET** is a zero-trust, forensic-grade digital provenance and attribution platform. It integrates:
-- **Hybrid Envelope Encryption:** AES-256-GCM payload encryption with per-recipient X25519 Elliptic Curve Diffie-Hellman (ECDH) key encapsulation and HKDF-SHA256 key derivation.
-- **Secure Zero-Leak Decryption Pipeline:** Plaintext bytes are never stored on disk or exposed to external callers. During in-memory decryption, a recipient-unique invisible watermark is dynamically embedded into the image before rendering.
-- **Robust DCT-QIM Spread-Spectrum Watermarking:** Multi-coefficient 2D Discrete Cosine Transform (DCT) Quantization Index Modulation (QIM) across mid-frequency bands `(2,2), (3,1), (1,3), (2,3)` with 2-zone spatial interleaving, 3× macro-redundancy (24 votes/bit), CRC-16 checksum, and a dedicated synchronization template on coefficient `(4,2)` that survives JPEG compression, cropping, Gaussian noise, and rotations up to ±5.5°.
-- **Cryptographic Hash-Chain Ledger with Secondary Anchoring:** An immutable append-only ledger where each block contains an Ed25519 digital signature of the canonical decryption record. A secondary snapshot anchor (`anchors.json`) is committed every 5 blocks, detecting and neutralizing sophisticated history-rewrite (rehash) attacks.
-- **Multi-Signal Forensic Attribution Engine:** Analyzes leaked assets across 3 perturbation channels (original, Gaussian blur, JPEG Q85) with variance filtering and sync correlation, returning a 0–100 forensic confidence score and classifying tampering into specific vectors (crop, noise, compression, rotation).
-- **Dual-Interface Operation:** Available via a command-line interface (CLI), a production-grade FastAPI REST service with asynchronous worker queues, and a modern enterprise Web Dashboard (Box DLP / ProtonDrive style).
+### 1.1 The Required Paradigm
+Traditional document protection operates on a naive `Encrypt → Decrypt → Verify` model, which leaves distribution untracked and provenance unproven. SANKET implements the complete enterprise lifecycle:
+
+$$\mathbf{Distribute} \longrightarrow \mathbf{Authorize} \longrightarrow \mathbf{Decrypt} \longrightarrow \mathbf{Attribute} \longrightarrow \mathbf{Verify}$$
+
+```
++-------------------------------------------------------------------------------------------------------+
+|                                    SANKET 5-STAGE SECURE LIFECYCLE                                    |
++-------------------+--------------------+--------------------+--------------------+--------------------+
+| 1. DISTRIBUTE     | 2. AUTHORIZE       | 3. DECRYPT         | 4. ATTRIBUTE       | 5. VERIFY          |
+| Single AES-256-GCM| Strict Gatekeeper  | Kyber KEM Unwrap   | Multi-Signal DCT   | Dual Dilithium Sig |
+| Encrypt + Kyber   | 403 Forbidden on   | In-Memory DCT-QIM  | 3-Way Perturbation | Hashchain Ledger + |
+| Key Encapsulation | Non-Recipients     | Watermark + Nonce  | Heuristic Tamper   | Periodic Anchors   |
++-------------------+--------------------+--------------------+--------------------+--------------------+
+```
+
+### 1.2 Core Architectural Principles
+1. **Zero Storage Redundancy**: A document distributed to $N$ recipients is encrypted once. Ephemeral AES keys are encapsulated individually per recipient via Post-Quantum KEM (**ML-KEM-768 / Kyber**).
+2. **Local Key Custody**: Private keys reside strictly on local client/node storage (`data/keys/{user_id}/`). The server never holds or transmits private keys.
+3. **Strict Gatekeeping**: Only explicitly registered recipients and the sender can access, inspect, or attempt decryption of a distributed document.
+4. **Zero-Leak In-Memory Watermarking**: Plaintext is never written to disk unwatermarked. During decryption, a unique DCT-QIM watermark is embedded with session nonces.
+5. **Multi-Signature Non-Repudiation**: Decryption events require dual post-quantum digital signatures (**ML-DSA-65 / Dilithium**) from both the recipient and the system authority before appending to the hashchain.
 
 ---
 
-## 2. Complete Execution & Deployment Guide
-
-### 2.1 System Prerequisites
-- **Operating System:** Windows 10/11, Ubuntu 20.04/22.04 LTS, or macOS (x86_64 / Apple Silicon)
-- **Python:** Python 3.10, 3.11, or 3.12 (with `pip`)
-- **Node.js:** Node.js v18.x or v20.x (with `npm`)
-- **C/C++ Build Tools / OpenCV Dependencies:** (standard on Windows; `libgl1-mesa-glx` on Linux headless)
-
-### 2.2 Installation & Dependency Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/SuyashGargote/SANKET.git
-cd SANKET
-
-# 1. Setup Python Virtual Environment
-python -m venv venv
-
-# Windows PowerShell:
-.\venv\Scripts\Activate.ps1
-# Linux / macOS:
-# source venv/bin/activate
-
-# 2. Install Backend Python Dependencies
-pip install -r requirements.txt
-
-# 3. Install Frontend Dependencies
-cd frontend
-npm install
-cd ..
-```
-
-`requirements.txt` contains:
-```text
-cryptography>=41.0.0
-Pillow>=10.0.0
-numpy>=1.24.0
-opencv-python>=4.8.0
-fastapi>=0.100.0
-uvicorn>=0.22.0
-python-multipart>=0.0.6
-pydantic>=2.0.0
-```
-
----
-
-### 2.3 Running the System
-
-#### Mode A: Automated End-to-End CLI Verification (17 Steps)
-The built-in automated test and demonstration suite runs through complete key generation, multi-recipient encryption, watermarking, 8 distinct adversarial attack simulations (JPEG Q50/Q70/Q90, resizing, Gaussian noise, 10–30% cropping, rotations up to 5°, multi-cycle JPEG, and combined attacks), and ledger verification:
-```bash
-python main.py demo
-```
-
-#### Mode B: Command-Line Interface (CLI) Step-by-Step
-
-```bash
-# Step 1: Initialize User Keypairs (Ed25519 signing + X25519 ECDH exchange)
-python main.py setup --users "alice,bob,charlie"
-
-# Step 2: Encrypt a Document for Selected Recipients
-# Creates data/encrypted/<filename>/ containing payload.enc and metadata.json
-python main.py encrypt --file tests/sample.png --recipients "alice,bob"
-
-# Step 3: Decrypt as Bob
-# Decrypts in-memory, embeds Bob's unique watermark, signs with Bob's Ed25519 key, logs to ledger
-python main.py decrypt --package data/encrypted/sample --user bob
-
-# Step 4: Verify an Exfiltrated / Leaked Image
-# Performs multi-signal extraction, sync check, CRC validation, and ledger match
-python main.py verify --file data/decrypted/sample_bob_84a3903e.png
-
-# Step 5: Generate Full Forensic Tamper Analysis Report (Saved to data/reports/)
-python main.py report --file data/decrypted/sample_bob_84a3903e.png
-
-# Step 6: Verify Ledger Consensus and Secondary Anchors
-python main.py ledger-verify
-
-# Step 7: View Full Chronological Ledger
-python main.py ledger
-```
-
-#### Mode C: Production REST API Server
-Launch the FastAPI backend engine with asynchronous workers, rate limiting, and API key authentication:
-```bash
-# Run server on all interfaces (Port 8000)
-uvicorn api.server:app --host 0.0.0.0 --port 8000 --reload
-```
-- **API Base URL:** `http://127.0.0.1:8000`
-- **Interactive OpenAPI / Swagger UI:** `http://127.0.0.1:8000/docs`
-- **ReDoc Documentation:** `http://127.0.0.1:8000/redoc`
-- **Default Authentication Keys:** `sanket-admin-key-2026`, `sih-judge-key-2026` (via header `X-API-KEY`)
-
-#### Mode D: Enterprise Web Dashboard
-Launch the Vite React frontend (Exposed to local network / LAN):
-```bash
-cd frontend
-npx vite --host
-```
-- **Web Dashboard URL:** `http://localhost:5173`
-- **LAN Access:** `http://<your-lan-ip>:5173` (allows multiple physical devices on the same Wi-Fi/LAN to simulate Alice sending from Laptop A and Bob decrypting on Laptop B).
-
----
-
-### 2.4 10-Second Judge Demonstration Workflow
-
-To demonstrate the full system to evaluators and judges in under 10 seconds:
-
-```
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│  1. Alice Encrypts  ➔  2. Bob Receives  ➔  3. Bob Opens (Watermarked)  ➔  4. Leak Occurs  ➔  5. Source Attributed  │
-└─────────────────────────────────────────────────────────────────────────────────────────────┘
-```
-
-1. **Open Dashboard:** Navigate to `http://localhost:5173` in any browser.
-2. **Switch Persona to Alice:** Click the `Alice` pill in the header switcher.
-3. **Dispatch Document:** Go to **"1. Send File"**, click **"Use Sample Document"**, and click **"Encrypt & Dispatch to Bob"**.
-4. **Switch Persona to Bob:** Click the `Bob` pill in the header.
-5. **Open Document:** Go to **"2. My Files"** ➔ click **"Open / Decrypt"** on the received package. (The document renders in the secure modal; Bob's unique invisible watermark is embedded and recorded into the ledger).
-6. **Trigger Leak & Attribution:** Inside the document modal, click **"Simulate Leak & Test Detection"** (or switch to **"3. Leak Investigation"** and run analysis).
-7. **Observe Attribution Verdict:** The **Big Centered Result Screen** displays:
-   - `LEAK SOURCE IDENTIFIED: BOB (94.5% CONFIDENCE)`
-   - Side-by-side visual comparison with a pulsating red bounding box highlighting the tampered area.
-   - Plain-English 3-line cryptographic summary.
-8. **Inspect Immutable Ledger:** Switch to **"4. Ledger"** to see the newly appended block in the connected Node DAG. Click **"Resilience Testing"** ➔ **"Inject Record Tampering"** to demonstrate immediate cryptographic chain severance and anchor alert.
-
----
-
-## 3. High-Level Design (HLD)
-
-### 3.1 System Context Diagram
-The following diagram illustrates the external actors and system boundaries of SANKET.
+## 2. High-Level Architecture (HLD)
 
 ```mermaid
-graph TD
-    Sender[Alice - Data Owner] -->|Uploads plaintext & specifies recipients| API[SANKET Gateway / FastAPI]
-    Recipient[Bob - Authorized Recipient] -->|Requests decryption| API
-    Adversary[Leaker / Adversary] -.->|Exfiltrates, crops, compresses, leaks| PublicDomain[Public Forum / Dark Web]
-    ForensicAuditor[Forensic Investigator] -->|Submits leaked asset| API
-
-    subgraph SANKET Platform
-        API --> CryptoEngine[Crypto Engine: AES-GCM + X25519]
-        API --> WatermarkEngine[Watermark Engine: DCT-QIM + Sync]
-        API --> LedgerEngine[Anchored Ledger: SHA-256 + Ed25519]
-        API --> ForensicEngine[Forensic Engine: Multi-Signal Analysis]
-        API --> StorageLayer[(Secure File Repository & Keys)]
+flowchart TD
+    subgraph IdentityLayer ["1. User Identity & Key Custody Layer"]
+        U_ALICE["Alice (Sender)"]
+        U_BOB["Bob (Recipient)"]
+        U_CHARLIE["Charlie (Auditor)"]
+        SYS_AUTH["SANKET Security Gateway"]
+        LOCAL_KEYS[("Local Keystore: data/keys/{uid}/<br/>• Dilithium SK/PK (ML-DSA-65)<br/>• Kyber SK/PK (ML-KEM-768)")]
+        U_ALICE -.-> LOCAL_KEYS
+        U_BOB -.-> LOCAL_KEYS
+        SYS_AUTH -.-> LOCAL_KEYS
     end
 
-    ForensicEngine -->|Extracts watermark & validates CRC| LedgerEngine
-    LedgerEngine -->|Matches record & verifies Ed25519 signature| ForensicEngine
-    ForensicEngine -->|Returns verified attribution & tamper report| ForensicAuditor
+    subgraph DistributionLayer ["2. Distribution & Authorization Layer"]
+        U_ALICE -->|"POST /send (file, recipients=[bob])"| REGISTRY["Document Registry (registry.json)"]
+        REGISTRY -->|"Single Encrypt (AES-256-GCM)"| PKG["Encrypted Package (data/encrypted/)<br/>• payload.enc (Single shared file)<br/>• metadata.json (Kyber-wrapped keys)"]
+        PKG -.->|"Wrapped Key 1"| KEM_BOB["Kyber CT (Bob PK)"]
+        PKG -.->|"Wrapped Key 2"| KEM_ALICE["Kyber CT (Alice PK)"]
+    end
+
+    subgraph DecryptionLayer ["3. Authorized Decrypt & Watermarking Layer"]
+        U_BOB -->|"POST /decrypt (X-User-ID: bob)"| GATEKEEPER{"Authorization Gate:<br/>Is Bob ∈ recipients?"}
+        GATEKEEPER -->|"No (403)"| REJECT["Deny Access (HTTP 403 Forbidden)"]
+        GATEKEEPER -->|"Yes"| KYBER_DEC["Kyber Decapsulation (Bob SK) -> AES Key"]
+        KYBER_DEC --> AES_DEC["In-Memory AES-256-GCM Plaintext Recovery"]
+        AES_DEC --> DCT_EMBED["DCT-QIM Watermark Embedder<br/>(Unique Nonce + CRC-16 Checksum)"]
+        DCT_EMBED --> DUAL_SIGN["Dual Post-Quantum Signing:<br/>1. Recipient Signature (Bob Dilithium SK)<br/>2. System Authority Signature (Gateway SK)"]
+        DUAL_SIGN --> LEDGER_STORE[("Anchored Hashchain Ledger<br/>data/ledger/chain.json<br/>(Min. 2 Signatures Enforced)")]
+    end
+
+    subgraph ForensicLayer ["4. Multi-Signal Forensic Attribution Engine"]
+        LEAK_FILE["Leaked / Attacked Document"] --> EXTRACTOR["Multi-Signal DCT-QIM Extractor<br/>(Original, Gaussian Blur, JPEG Q85)"]
+        EXTRACTOR --> SYNC_ALIGN["Try-and-Verify Sync Recovery (±5.5°)"]
+        SYNC_ALIGN --> CONFIDENCE["Confidence Scoring Engine (0-100)"]
+        CONFIDENCE --> LEDGER_QUERY["Ledger Match & Dual Signature Audit"]
+        LEDGER_QUERY --> VERDICT["Forensic Court Evidence Report:<br/>Attributed Source: Bob (Confidence: 80%+)"]
+    end
 ```
 
 ---
 
-### 3.2 Tiered Architecture Breakdown
-
-SANKET is structured into four decoupled, modular tiers:
-
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        PRESENTATION TIER (UI)                          │
-│  - React 18 / Vite 5 / Tailwind CSS                                   │
-│  - Personas: Alice (Sender) / Bob (Recipient) / Auditor               │
-│  - Tabs: Send File | My Files | Leak Investigation | Anchored Ledger  │
-│  - Visualizers: Node DAG Flow, Attack Bounding Box, Block Inspector    │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ JSON / Multipart (X-API-KEY)
-┌───────────────────────────────────▼────────────────────────────────────┐
-│                       REST API GATEWAY & JOBS                          │
-│  - FastAPI Engine with CORS middleware                                │
-│  - Authentication: X-API-KEY / query token validator                  │
-│  - Rate Limiter: In-memory sliding-window (120 req/min/IP)            │
-│  - Async Worker Queue: JobManager (UUID job tracking)                 │
-│  - File Retention Cleaner: Automatic pruning (MAX_KEPT_FILES = 50)    │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ Internal Invocations
-┌───────────────────────────────────▼────────────────────────────────────┐
-│                       CORE FORENSIC LOGIC TIER                         │
-│  ┌───────────────────────┐ ┌────────────────────────────────────────┐  │
-│  │    Crypto Engine      │ │           Watermark Engine             │  │
-│  │ - AES-256-GCM Payload │ │ - 8x8 Block DCT (Y Channel)            │  │
-│  │ - X25519 ECDH Wrap    │ │ - 4 Mid-Freq Coeffs: (2,2),(3,1)...    │  │
-│  │ - HKDF Key Derivation │ │ - Adaptive QIM Delta (38 - 62)         │  │
-│  │ - Ed25519 Signatures  │ │ - 2-Zone Interleaved Spread Spectrum   │  │
-│  │ - Zero Raw-Byte Leak  │ │ - Sync Template on (4,2) (Delta = 80)  │  │
-│  └───────────────────────┘ └────────────────────────────────────────┘  │
-│  ┌───────────────────────┐ ┌────────────────────────────────────────┐  │
-│  │ Anchored Hash-Chain   │ │        Forensic Verifier Engine        │  │
-│  │ - Canonical SHA-256   │ │ - Multi-Signal Perturbation (3-way)    │  │
-│  │ - prev_hash Linkage   │ │ - Confidence Scoring Engine (0-100)    │  │
-│  │ - Periodic Anchors    │ │ - Tamper Classification Heuristics     │  │
-│  │   (Every 5 blocks)    │ │ - Severity Scorer (NONE/LOW/MED/HIGH)  │  │
-│  └───────────────────────┘ └────────────────────────────────────────┘  │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │ File System Persistence
-┌───────────────────────────────────▼────────────────────────────────────┐
-│                           STORAGE TIER                                 │
-│  - data/keys/<user>/       : Ed25519 & X25519 PEM keypairs            │
-│  - data/encrypted/<file>/  : payload.enc + metadata.json               │
-│  - data/decrypted/         : Watermarked recipient copies              │
-│  - data/ledger/            : ledger.json, anchor.json, anchors.json    │
-│  - data/reports/           : Forensic analysis JSON reports            │
-└────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 4. Low-Level Design (LLD)
-
-### 4.1 Cryptographic Subsystem (`modules/crypto/`)
-
-#### 4.1.1 Key Wrap Protocol (X25519 ECDH + HKDF-SHA256)
-When a file is encrypted for $N$ recipients $\{R_1, R_2, \dots, R_N\}$:
-1. Generate an ephemeral file symmetric key $K_{\text{file}} \leftarrow \text{CSPRNG}(256\text{ bits})$ and nonce $N_{\text{file}} \leftarrow \text{CSPRNG}(96\text{ bits})$.
-2. Encrypt the file payload using AES-256-GCM:
-   $$C = \text{AES-GCM-Encrypt}(K_{\text{file}}, N_{\text{file}}, \text{Plaintext})$$
-3. For each recipient $R_i$ with static public key $P_{R_i}$:
-   - Generate an ephemeral X25519 keypair: $(k_{\text{eph}}, P_{\text{eph}})$.
-   - Compute shared secret:
-     $$S_i = \text{X25519}(k_{\text{eph}}, P_{R_i})$$
-   - Derive key-wrapping key $K_{\text{wrap}, i}$ via HKDF:
-     $$K_{\text{wrap}, i} = \text{HKDF-SHA256}(\text{ikm}=S_i, \text{salt}=\text{None}, \text{info}=\texttt{"document-key-wrap"}, \text{len}=32)$$
-   - Wrap $K_{\text{file}}$:
-     $$N_{\text{wrap}, i} \leftarrow \text{CSPRNG}(96\text{ bits})$$
-     $$W_i = \text{AES-GCM-Encrypt}(K_{\text{wrap}, i}, N_{\text{wrap}, i}, K_{\text{file}})$$
-   - Store $(P_{\text{eph}}, N_{\text{wrap}, i}, W_i)$ in `metadata.json`.
-
-#### 4.1.2 Zero-Leak In-Memory Decryption Pipeline
-The decryption pipeline ([`modules/crypto/decryption.py`](file:///d:/SIH/ps237/modules/crypto/decryption.py)) ensures that raw decrypted data is never saved to non-volatile storage:
-```python
-def decrypt_file(pkg_dir: str, user_id: str) -> dict:
-    # 1. In-memory AES-GCM decryption
-    raw_bytes, original_filename = decrypt_file_raw(pkg_dir, user_id)
-    
-    # 2. Dynamic Unique Watermark Generation
-    file_id = generate_file_id(os.path.join(pkg_dir, "payload.enc"))
-    timestamp = datetime.now(timezone.utc).isoformat()
-    nonce = generate_nonce() # 128-bit random hex
-    watermark_id = generate_watermark_id(user_id, file_id, timestamp, nonce)
-    
-    # 3. Synchronous Embedding into Y-Channel DCT
-    watermarked_bytes = embed_watermark(raw_bytes, watermark_id)
-    del raw_bytes # Immediate memory reclamation
-    
-    # 4. Ed25519 Digital Signature of Canonical Record
-    record = {
-        "watermark_id": watermark_id,
-        "user_id": user_id,
-        "file_id": file_id,
-        "timestamp": timestamp,
-        "nonce": nonce
-    }
-    signature = sign_record(record, load_private_key(user_id))
-    record["signature"] = signature
-    
-    # 5. Atomic Append to Ledger & Output Persistence
-    block = append_record(record)
-    save_to_decrypted_dir(watermarked_bytes)
-    return {"watermark_id": watermark_id, "block": block, ...}
-```
-
----
-
-### 4.2 Watermarking Engine (`modules/watermark/`)
-
-#### 4.2.1 Mathematical Foundations of DCT-QIM
-1. **Color Space Transformation:**
-   The image is converted from RGB to YCrCb:
-   $$Y = 0.299R + 0.587G + 0.114B$$
-   Only the luminance channel ($Y$) is watermarked, exploiting the human visual system's lower sensitivity to high-frequency luminance variations compared to chrominance.
-
-2. **2D Discrete Cosine Transform (DCT):**
-   The $Y$ channel is divided into non-overlapping $8 \times 8$ pixel blocks $B(x,y)$. Each block undergoes 2D DCT:
-   $$F(u, v) = \frac{1}{4} C(u) C(v) \sum_{x=0}^{7} \sum_{y=0}^{7} B(x, y) \cos\left[\frac{(2x+1)u\pi}{16}\right] \cos\left[\frac{(2y+1)v\pi}{16}\right]$$
-   where $C(u), C(v) = \frac{1}{\sqrt{2}}$ for $u,v=0$ and $1$ otherwise.
-
-3. **Mid-Frequency Coefficient Selection:**
-   Low frequencies carry macro structure (modifications produce visible artifacts). High frequencies are discarded by lossy compression. SANKET embeds into the 4 mid-frequency coefficients:
-   $$\Omega_{\text{embed}} = \{(2, 2), (3, 1), (1, 3), (2, 3)\}$$
-
-4. **Quantization Index Modulation (QIM):**
-   To embed bit $b \in \{0, 1\}$ into coefficient $c = F(u,v)$ with step size $\Delta$:
-   $$q = \text{round}\left(\frac{c}{\Delta}\right)$$
-   If $q \pmod 2 \neq b$:
-   $$q^* = \begin{cases} 
-   q - 1 & \text{if } |(q-1)\Delta - c| \le |(q+1)\Delta - c| \\
-   q + 1 & \text{otherwise}
-   \end{cases}$$
-   $$c_{\text{watermarked}} = q^* \cdot \Delta$$
-
-5. **Adaptive Delta Formulation:**
-   To maintain imperceptibility in smooth regions while ensuring robustness in textured regions, $\Delta$ scales dynamically with block variance $\sigma_B^2$:
-   $$\Delta(\sigma_B^2) = \Delta_{\min} + \min\left(\frac{\sigma_B^2}{\sigma_{\text{threshold}}^2}, 1.0\right) \cdot (\Delta_{\max} - \Delta_{\min})$$
-   where $\Delta_{\min} = 38.0$, $\Delta_{\max} = 62.0$, and $\sigma_{\text{threshold}}^2 = 500.0$.
-
-#### 4.2.2 Redundancy & Synchronization Template
-- **Payload Structure:** 128-bit Watermark ID + 16-bit CRC-16/CCITT = 144 bits.
-- **Macro-Redundancy:** $3\times$ repeated payload = 432 bits.
-- **Spatial Spread Factor:** 2 zones (top and bottom halves of image).
-- **Total Redundancy:** 4 coefficients $\times$ 2 zones $\times$ 3 copies = **24 votes per watermark bit**.
-- **Synchronization Template:** Coefficient $(4, 2)$ in *every* $8 \times 8$ block is modulated using a fixed, deterministic $4 \times 4$ binary pattern with $\Delta_{\text{sync}} = 80.0$. The extractor uses this pattern to search rotation space $\theta \in [-5.5^\circ, +5.5^\circ]$ at $0.25^\circ$ increments, auto-recovering skewed and rotated images.
-
----
-
-### 4.3 Anchored Ledger Subsystem (`modules/ledger/`)
-
-#### 4.3.1 Cryptographic Block Linkage
-Each ledger block $B_i$ contains:
-$$B_i = \{i, H(B_{i-1}), \text{watermark\_id}, \text{user\_id}, \text{file\_id}, \text{timestamp}, \text{nonce}, \sigma_{\text{Ed25519}}, H(B_i)\}$$
-where the block hash is computed over all canonical fields excluding `hash`:
-$$H(B_i) = \text{SHA-256}(\text{CanonicalJSON}(B_i \setminus \{\text{"hash"}\}))$$
-
-#### 4.3.2 Secondary Periodic State Anchoring
-To prevent the "history-rewrite attack" (where an attacker alters Block #0 and recomputes all downstream block hashes $H(B_1) \dots H(B_N)$):
-- Every $5$ blocks ($\text{index} \pmod 5 == 0$), a snapshot hash of the entire ledger chain is generated:
-  $$\text{AnchorHash}_k = \text{SHA-256}(\text{CanonicalJSON}(B_0, B_1, \dots, B_{5k}))$$
-- This snapshot is committed to an isolated file: `data/ledger/anchors.json`.
-- When `verify_ledger_with_anchors()` runs:
-  1. It validates sequential continuity: $B_i.\text{prev\_hash} == H(B_{i-1})$.
-  2. It recalculates the snapshot for each checkpoint and compares it against `anchors.json`.
-  3. If hashes match but anchor snapshots diverge, the system raises an `ANCHOR_MISMATCH` critical alert.
-
----
-
-### 4.4 Forensic Verification & Scoring Engine (`modules/verification/`)
-
-#### 4.4.1 Multi-Signal Extraction Pipeline
-A leaked image is extracted across 3 perturbation channels:
-1. **Primary Signal:** Raw image as received.
-2. **Blurred Signal:** Gaussian filtered ($3 \times 3$, $\sigma = 0.8$) to simulate minor downsampling or smoothing.
-3. **JPEG Signal:** Re-compressed at Quality 85 to simulate social media transmission.
-
-If all 3 channels extract the identical watermark ID, `multi_signal_stable = True` and agreement is $3/3$.
-
-#### 4.4.2 Confidence Scoring Formulation
-The confidence score $C \in [0, 100]$ is computed via:
-$$C = \text{clamp}_{[0, 100]}\Big( \underbrace{V_{\text{ratio}} \times 60}_{\text{Base Score}} + \underbrace{B_{\text{CRC}}}_{\text{CRC Boost}} + \underbrace{B_{\text{sync}}}_{\text{Sync Boost}} - \underbrace{P_{\text{corr}}}_{\text{Corruption Penalty}} \Big)$$
-
-Where:
-- $V_{\text{ratio}} \in [0.0, 1.0]$ is the majority-vote inter-copy agreement.
-- $B_{\text{CRC}} = 25$ if CRC-16 passes, else $0$.
-- $B_{\text{sync}} = 15$ if $\text{SyncScore} \ge 0.75$, $8$ if $\ge 0.60$, else $0$.
-- $P_{\text{corr}} = 25$ if $\text{Corruption} > 0.50$, $20$ if $> 0.30$, $10$ if $> 0.15$, else $0$.
-
-**Hard Rejection Rules (Zero False Positives):**
-- If $\text{Corruption} > 0.80 \implies \text{Confidence} = 0$, `REJECT`
-- If $V_{\text{ratio}} < 0.60 \implies \text{Confidence} = 0$, `REJECT`
-- If $\text{CRC fails}$ AND $V_{\text{ratio}} < 0.70 \implies \text{Confidence} = 0$, `REJECT`
-
-#### 4.4.3 Categorical Verdicts
-- **$C \ge 80.0$**: `HIGH_CONFIDENCE` (Court-admissible forensic match)
-- **$55.0 \le C < 80.0$**: `MEDIUM` (Probable match, corroborating evidence recommended)
-- **$30.0 \le C < 55.0$**: `LOW` (Weak signal, high noise/damage)
-- **$C < 30.0$**: `REJECT` (Attribution denied)
-
----
-
-## 5. Use Case Diagrams & Specifications
-
-### 5.1 Use Case Diagram (System Interactions)
-
-```mermaid
-graph LR
-    User[Authorized User]
-    Admin[Security Officer / Auditor]
-    Attacker[Internal / External Threat]
-
-    subgraph Authentication & Access
-        User --> UC1[UC-1: Key Generation & Registration]
-    end
-
-    subgraph Secure Collaboration
-        User --> UC2[UC-2: Encrypt & Distribute File]
-        User --> UC3[UC-3: View Received Files]
-        User --> UC4[UC-4: Decrypt & Watermark Document]
-    end
-
-    subgraph Forensic Attribution & Auditing
-        Admin --> UC5[UC-5: Ingest Suspected Leaked Asset]
-        Admin --> UC6[UC-6: Run Multi-Signal Attribution]
-        Admin --> UC7[UC-7: Generate Forensic Tamper Report]
-        Admin --> UC8[UC-8: Audit Ledger Chain & Anchors]
-        Admin --> UC9[UC-9: Run Adversarial Resilience Test]
-    end
-
-    subgraph Adversarial Actions
-        Attacker -.->|Attacks Watermark| UC10[Crop / Compress / Rotate Image]
-        Attacker -.->|Attempts History Rewrite| UC11[Mutate Ledger Blocks & Rehash]
-    end
-
-    UC10 -.->|Detected by| UC6
-    UC11 -.->|Caught by| UC8
-```
-
----
-
-### 5.2 Use Case Specifications
-
-#### UC-2: Encrypt & Distribute File
-- **Primary Actor:** Sender (e.g. Alice)
-- **Preconditions:** Sender and all recipients have generated X25519 public keys.
-- **Main Flow:**
-  1. Sender uploads PNG document via Web UI (`/encrypt`) or CLI.
-  2. Sender selects recipient list (e.g., `alice,bob`).
-  3. System generates random 256-bit AES key and 96-bit nonce.
-  4. System encrypts plaintext payload using AES-256-GCM.
-  5. System derives wrapping keys via ECDH + HKDF-SHA256 for each recipient.
-  6. Encrypted package directory is created with `payload.enc` and `metadata.json`.
-- **Postconditions:** Encrypted package is ready for dissemination. No recipient can decrypt other recipients' keys.
-
-#### UC-4: Decrypt & Watermark Document
-- **Primary Actor:** Recipient (e.g. Bob)
-- **Preconditions:** Bob is listed in `metadata.json` and possesses the corresponding X25519 private key.
-- **Main Flow:**
-  1. Bob requests decryption of the package.
-  2. System unwraps the file AES key using Bob's private key.
-  3. System decrypts ciphertext in memory.
-  4. System creates unique watermark ID incorporating Bob's user ID, file SHA-256 hash, timestamp, and a CSPRNG nonce.
-  5. System embeds watermark and sync pattern into $Y$-channel DCT coefficients.
-  6. System creates a decryption record and signs it with Bob's Ed25519 private key.
-  7. System appends the signed record to the anchored ledger.
-  8. System renders watermarked PNG to Bob in the secure Document Viewer.
-- **Postconditions:** Bob possesses a personalized document. An immutable cryptographic audit record exists linking Bob's signature to the unique watermark ID.
-
-#### UC-6: Ingest & Attribute Leaked Document
-- **Primary Actor:** Forensic Investigator
-- **Preconditions:** An image leaked to an external channel is obtained.
-- **Main Flow:**
-  1. Investigator uploads the image to the Leak Investigation tab (`POST /verify`).
-  2. System executes try-and-verify rotation search against synchronization template.
-  3. System performs 3-way multi-signal extraction (original, blurred, JPEG Q85).
-  4. System validates CRC-16 checksum and computes vote ratio.
-  5. System computes forensic confidence score and evaluates rejection rules.
-  6. System queries ledger for matching `watermark_id`.
-  7. System verifies Ed25519 signature of the ledger block using the identified user's public key.
-  8. System returns attribution verdict (`LEAK SOURCE IDENTIFIED: BOB`).
-- **Postconditions:** Investigator obtains definitive attribution with cryptographic non-repudiation.
-
----
-
-## 6. Detailed Sequence Diagrams
-
-### 6.1 End-to-End Encryption & Distribution Flow
+## 3. End-to-End User Flow (8-Stage Lifecycle)
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Alice as Alice (Sender)
-    participant UI as Dashboard / Client
-    participant API as FastAPI Gateway
-    participant Crypto as Crypto Module
-    participant Storage as File Storage
-
-    Alice->>UI: Selects document & recipients ("alice, bob")
-    UI->>API: POST /encrypt (file.png, recipients)
-    API->>Crypto: encrypt_file("file.png", ["alice", "bob"])
-    Crypto->>Crypto: Generate file_key (AES-256) & nonce (96-bit)
-    Crypto->>Crypto: Ciphertext = AES-GCM-Encrypt(file_key, file.png)
-    loop For each recipient (Alice, Bob)
-        Crypto->>Storage: Load X25519 public key
-        Crypto->>Crypto: Ephemeral ECDH exchange -> shared_secret
-        Crypto->>Crypto: Derive wrap_key via HKDF-SHA256
-        Crypto->>Crypto: wrapped_key = AES-GCM-Encrypt(wrap_key, file_key)
-    end
-    Crypto->>Storage: Write payload.enc & metadata.json
-    Storage-->>API: Package path: data/encrypted/sample/
-    API-->>UI: 200 OK (package_path, recipients, file_hash)
-    UI-->>Alice: Displays package in "Sent Files"
-```
-
----
-
-### 6.2 Zero-Leak Decryption, Dynamic Watermarking & Ledger Logging Flow
-
-```mermaid
-sequenceDiagram
-    autonumber
     actor Bob as Bob (Recipient)
-    participant UI as Dashboard / Client
-    participant API as FastAPI Gateway
-    participant DecryptMod as Decryption Module
-    participant WMEngine as Watermark Engine
-    participant SigMod as Signature Module
-    participant Ledger as Hash-Chain Ledger
-
-    Bob->>UI: Clicks "Open / Decrypt" in My Files
-    UI->>API: POST /decrypt (package_path, user="bob")
-    API->>DecryptMod: decrypt_file(package_path, "bob")
-    DecryptMod->>DecryptMod: Unwrap AES file_key using Bob's X25519 private key
-    DecryptMod->>DecryptMod: Plaintext = AES-GCM-Decrypt(ciphertext)
-    DecryptMod->>DecryptMod: Generate unique watermark_id(user="bob", nonce, time)
-    DecryptMod->>WMEngine: embed_watermark(Plaintext, watermark_id)
-    WMEngine->>WMEngine: RGB -> YCrCb -> 8x8 DCT
-    WMEngine->>WMEngine: QIM embed watermark in mid-freq coeffs
-    WMEngine->>WMEngine: QIM embed sync pattern on (4,2)
-    WMEngine->>WMEngine: IDCT -> Reconstruct PNG
-    WMEngine-->>DecryptMod: watermarked_bytes
-    DecryptMod->>DecryptMod: del Plaintext (Memory cleared)
-    DecryptMod->>SigMod: sign_record({watermark_id, user, file_id, nonce})
-    SigMod-->>DecryptMod: Ed25519 signature
-    DecryptMod->>Ledger: append_record(record_with_signature)
-    Ledger->>Ledger: Calculate SHA-256 block hash & link prev_hash
-    Ledger->>Ledger: Check if index % 5 == 0 -> Append snapshot to anchors.json
-    DecryptMod-->>API: Result {output_path, watermark_id, block}
-    API-->>UI: 200 OK (Render watermarked image in modal)
-    UI-->>Bob: Displays document with invisible watermark attribution
-```
-
----
-
-### 6.3 Forensic Verification & Leak Attribution Flow
-
-```mermaid
-sequenceDiagram
-    autonumber
+    participant API as SANKET Gateway
+    participant PQC as Crypto & Watermark Engine
+    participant Ledger as Multi-Sig Ledger
     actor Auditor as Forensic Auditor
-    participant UI as Dashboard / Client
-    participant API as FastAPI Gateway
-    participant Verifier as Verifier Module
-    participant Extractor as Extractor Engine
-    participant Ledger as Hash-Chain Ledger
-    participant SigMod as Signature Module
 
-    Auditor->>UI: Submits suspected leaked image
-    UI->>API: POST /verify (file=leaked.png)
-    API->>Verifier: verify_leaked_file(leaked.png)
-    Verifier->>Extractor: extract_watermark(leaked.png)
-    Extractor->>Extractor: Try angle=0 -> Check CRC
-    opt If CRC fails
-        Extractor->>Extractor: Try angles -5.5° to +5.5° via sync correlation
-    end
-    Extractor-->>Verifier: primary extraction {watermark_id, crc_valid, vote_ratio}
-    Verifier->>Verifier: Multi-signal test: Gaussian Blur & JPEG Q85 passes
-    Verifier->>Verifier: Calculate sync_score & corruption_ratio
-    Verifier->>Verifier: Compute confidence score (0 - 100) & check reject rules
-    Verifier->>Ledger: query_by_watermark(watermark_id)
-    Ledger-->>Verifier: matching block {user_id="bob", signature, timestamp, nonce}
-    Verifier->>SigMod: verify_signature(record, signature, Bob_public_key)
-    SigMod-->>Verifier: Signature Valid (True)
-    Verifier-->>API: Verdict: IDENTIFIED, User: Bob, Confidence: 94.5%
-    API-->>UI: 200 OK (Full attribution report)
-    UI-->>Auditor: Renders Big Centered Result Screen with attack bounding box
+    Alice->>API: 1. Login & Authenticate (Alice Dilithium & Kyber keys)
+    Alice->>API: 2. Upload Document & Select Recipients [Bob]
+    API->>PQC: Single Encrypt (AES-GCM) + Encapsulate key for Bob (ML-KEM-768)
+    API-->>Alice: Document registered (doc_xxxx) & logically distributed
+
+    Bob->>API: 3. Login as Bob & View Inbox
+    API-->>Bob: Returns documents with permission status (can_decrypt: true)
+
+    Bob->>API: 4. Trigger Decryption (X-User-ID: bob)
+    API->>API: Gatekeeper verifies Bob ∈ recipients
+    API->>PQC: Decapsulate AES key with Bob's Kyber Secret Key
+    API->>PQC: Embed unique DCT-QIM watermark in memory
+    API->>PQC: Dual Sign record (Bob Dilithium SK + Gateway Dilithium SK)
+    API->>Ledger: Append dual-signed block to hash chain
+    API-->>Bob: Watermarked image + Secure download link
+
+    Note over Bob,Auditor: 5. Document Leaks (Adversary crops, compresses & leaks Bob's file)
+    Auditor->>API: 6. Upload Leaked Document for Forensic Investigation
+    API->>PQC: Extract 144-bit watermark across 3 perturbation channels
+    API->>Ledger: Query watermark ID against block ledger history
+    API-->>Auditor: 7. Attribution Verdict: Bob identified with 80%+ confidence
+    Auditor->>Ledger: 8. Verify dual signatures & periodic anchors for non-repudiation
 ```
 
 ---
 
-## 7. Data Models, Schemas & File Formats
+## 4. Core Data Models
 
-### 7.1 Encrypted Package Schema (`metadata.json`)
+### 4.1 User Identity Model (`modules/identity/users.py`)
 ```json
 {
-  "original_filename": "classified_briefing.png",
-  "nonce": "a7b3c9f284e16d5029c481fa",
-  "wrapped_keys": {
-    "alice": {
-      "ephemeral_public": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEA...-----END PUBLIC KEY-----\n",
-      "nonce": "9e8a7b6c5d4e3f2a1b0c9d8e",
-      "wrapped_key": "3f8b1c2d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b"
-    },
-    "bob": {
-      "ephemeral_public": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEA...-----END PUBLIC KEY-----\n",
-      "nonce": "1a2b3c4d5e6f7a8b9c0d1e2f",
-      "wrapped_key": "8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f"
-    }
-  }
+  "user_id": "bob",
+  "name": "Bob Jones (Field Operative)",
+  "role": "Recipient / Field Operative",
+  "public_key": "d868ec21346164666084c8c99a577c3a...",
+  "kem_public_key": "6c69109d816bb5364ac0a27be5d14dbb...",
+  "private_key_path": "data/keys/bob/dsa_private.key",
+  "kem_private_key_path": "data/keys/bob/kem_private.key",
+  "created_at": "2026-09-26T10:44:58.969335+00:00"
+}
+```
+
+### 4.2 Document Registry Model (`modules/distribution/registry.py`)
+```json
+{
+  "document_id": "doc_5e22b05a6dda",
+  "filename": "reconnaissance_brief.png",
+  "sender": "alice",
+  "recipients": ["bob"],
+  "encrypted_package_path": "data/encrypted/reconnaissance_brief",
+  "package_name": "reconnaissance_brief",
+  "file_size_bytes": 296304,
+  "created_at": "2026-09-26T10:55:33.239075+00:00"
+}
+```
+
+### 4.3 Multi-Signature Ledger Block Model (`modules/ledger/hashchain.py`)
+```json
+{
+  "index": 1,
+  "timestamp": "2026-09-26T11:05:12.894102+00:00",
+  "user_id": "bob",
+  "file_id": "c92841ba59f31a2c",
+  "watermark_id": "7cd306f6580f1a23e981bc09a12e4d56...",
+  "nonce": "e3a890f845112ca0",
+  "event_type": "DECRYPTION_WATERMARKED",
+  "recipient_signature": "8d3e57403ff4348f... (ML-DSA-65 Bob, 3309 bytes)",
+  "system_signature": "40b0f14191a27e05... (ML-DSA-65 Gateway, 3309 bytes)",
+  "optional_validator_signature": null,
+  "prev_hash": "a4d3f568e09f87...",
+  "previous_hash": "a4d3f568e09f87...",
+  "hash": "b2f0991c45e6900f..."
 }
 ```
 
 ---
 
-### 7.2 Ledger Block Schema (`data/ledger/ledger.json`)
-```json
-[
-  {
-    "index": 0,
-    "previous_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-    "watermark_id": "88ae75ecf0e6496e4996a37a7847bbac",
-    "user_id": "alice",
-    "file_id": "eb63566b4fafab0a59cb4a80bfda15ff288e84dc3981f3dc6cf57b84a4a1e5fc",
-    "timestamp": "2026-09-25T13:23:30.776328+00:00",
-    "nonce": "c872dfd00b5768154a0526c69e18ed68",
-    "signature": "8305a404a5f5a40116c8f2091552a15aa747b5cc9e1fbf4d247e862d615d24f4cd16f76c5b3fc02bed124036d0b6978fe93a617eac15e58ef5452e1d5c39c206",
-    "hash": "669d86d1d187267e3cc3ce2eb8d33b8b0510ce540744c5239c1f8cdced84ee4b"
-  },
-  {
-    "index": 1,
-    "previous_hash": "669d86d1d187267e3cc3ce2eb8d33b8b0510ce540744c5239c1f8cdced84ee4b",
-    "watermark_id": "6426ada9fb093c834a3623d6a2f767a9",
-    "user_id": "bob",
-    "file_id": "eb63566b4fafab0a59cb4a80bfda15ff288e84dc3981f3dc6cf57b84a4a1e5fc",
-    "timestamp": "2026-09-25T13:23:35.120491+00:00",
-    "nonce": "5e1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c",
-    "signature": "91a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4",
-    "hash": "3ff0e30bd75721c1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5"
-  }
-]
+## 5. Low-Level Algorithmic Architecture (LLD)
+
+### 5.1 Post-Quantum Cryptography (PQC) Layer
+- **Key Encapsulation Mechanism (KEM)**: NIST **ML-KEM-768** (`pqcrypto.kem.ml_kem_768`).
+  - Public Key: 1,184 bytes | Secret Key: 2,400 bytes | Ciphertext: 1,088 bytes | Shared Secret: 32 bytes.
+  - Used to wrap and unwrap the document's ephemeral AES-256 key for each recipient.
+- **Digital Signatures**: NIST **ML-DSA-65** (`pqcrypto.sign.ml_dsa_65`).
+  - Public Key: 1,952 bytes | Secret Key: 4,032 bytes | Signature: 3,309 bytes.
+  - Generates non-repudiable multi-signatures over canonical serialized ledger blocks.
+
+### 5.2 Single Logical Encryption & Key Wrapping
+1. Generate ephemeral 256-bit symmetric key $K_{\text{doc}} \leftarrow \text{CSPRN}(32)$.
+2. Encrypt plaintext raster $M$ once using AES-256-GCM:
+   $$C_{\text{payload}}, T \leftarrow \text{AES-GCM}(K_{\text{doc}}, \text{IV}, M)$$
+3. For each authorized recipient $R_i \in \text{recipients}$:
+   $$C_{i}, \text{SS}_i \leftarrow \text{ML-KEM-768.encaps}(PK_{R_i})$$
+   $$K_{\text{wrap}, i} \leftarrow \text{HKDF-SHA256}(\text{SS}_i, \text{info}=\text{"document-key-wrap"})$$
+   $$W_i \leftarrow \text{AES-GCM}(K_{\text{wrap}, i}, \text{IV}_i, K_{\text{doc}})$$
+4. Store single encrypted $C_{\text{payload}}$ alongside wrapped keys $\{W_i, C_i\}$ in `metadata.json`.
+
+### 5.3 DCT-QIM Watermarking & Sync Recovery
+- **Transform Domain**: 2D Discrete Cosine Transform on 8x8 blocks of the Y-channel (YCbCr).
+- **Target Coefficients**: Mid-frequency coordinates `(2,2), (3,1), (1,3), (2,3)` balancing visual imperceptibility and resilience to compression/blur.
+- **Modulation**: Quantization Index Modulation (QIM) with adaptive step size $\Delta \in [38.0, 62.0]$ scaled by local block variance.
+- **Spread-Spectrum Redundancy**: 144-bit payload (128-bit watermark ID + 16-bit CRC-16/CCITT) repeated across 2 spatial zones with 24 votes/bit.
+- **Dedicated Sync Marker**: Coefficient `(4,2)` modulated with $\Delta_{\text{sync}} = 80.0$ allows angular skew search across $\pm 5.5^\circ$ at $0.25^\circ$ resolution.
+
+### 5.4 Multi-Signature Hashchain Ledger Consensus
+- **Chain Continuity**: Block $B_k$ binds to $B_{k-1}$ via $H_k = \text{SHA256}(B_k.\text{data} \parallel B_k.\text{prev\_hash})$.
+- **Multi-Sig Validation**: Every block must contain at least 2 valid signatures:
+  1. $S_{\text{recipient}} \leftarrow \text{ML-DSA-65.sign}(SK_{\text{recipient}}, \text{canonical}(B_k))$
+  2. $S_{\text{gateway}} \leftarrow \text{ML-DSA-65.sign}(SK_{\text{gateway}}, \text{canonical}(B_k))$
+- **Secondary Snapshot Anchors**: Every 5 blocks, a secondary anchor checkpoint is logged:
+  $$\text{Anchor}_m = \text{SHA256}\left(\sum_{j=1}^{5m} H_j\right)$$
+  Neutralizes history-rewrite and rehash attacks where an adversary recalculates hash pointers.
+
+### 5.5 Multi-Signal Forensic Attribution Engine
+When analyzing an exfiltrated image:
+1. Pass image through 3 perturbation channels: (a) Original, (b) Gaussian Blur (3x3), (c) JPEG Q85 re-encode.
+2. Filter low-variance (severely cropped/tampered) blocks.
+3. Align angular skew using sync template correlation.
+4. Extract bits via majority voting across the 3 channels.
+5. Compute composite confidence score $S \in [0, 100]$:
+   $$S = (\text{vote\_ratio} \times 60) + (\text{CRC\_valid} \times 25) + (\text{sync\_ratio} \times 15) - \text{penalties}$$
+6. Correlate with ledger to identify leaking user and verify multi-signature non-repudiation.
+
+---
+
+## 6. Execution & Deployment Guide
+
+### 6.1 Prerequisites
+- **Python**: 3.11+ or 3.12+ (64-bit) with `pip`
+- **Node.js**: v18+ or v20+ with `npm`
+- **OS**: Windows 10/11, Ubuntu 22.04 LTS, macOS
+
+### 6.2 Installation
+```bash
+# 1. Clone repository
+git clone https://github.com/SuyashGargote/SANKET.git
+cd SANKET
+
+# 2. Install backend dependencies (including pqcrypto)
+pip install -r requirements.txt
+
+# 3. Install frontend dependencies
+cd frontend
+npm install
+cd ..
+```
+
+### 6.3 Running Backend API Server
+```bash
+python -m uvicorn api.server:app --host 127.0.0.1 --port 8000 --reload
+```
+- API Base URL: `http://localhost:8000`
+- Interactive OpenAPI Docs: `http://localhost:8000/docs`
+- Default API Key: `sanket-admin-key-2026`
+
+### 6.4 Running Frontend Workflow Dashboard
+```bash
+cd frontend
+npm run dev
+```
+- Application UI: `http://localhost:5173/`
+
+### 6.5 Command-Line Interface (CLI)
+```bash
+# 1. Run 8-Stage End-to-End Enterprise Demo Flow
+python main.py demo-flow
+
+# 2. Run 24-Step Adversarial Robustness Test Suite
+python main.py demo
+
+# 3. Distribute document to recipients
+python main.py send data/uploads/sample.png --recipients bob,charlie
+
+# 4. Check recipient inbox
+python main.py inbox --user bob
+
+# 5. Verify suspected leaked image
+python main.py verify data/decrypted/test_document_bob_xxxx.png
+
+# 6. Verify ledger integrity and anchors
+python main.py ledger-verify
 ```
 
 ---
 
-### 7.3 Secondary Anchor Schema (`data/ledger/anchors.json`)
-```json
-[
-  {
-    "block_index": 5,
-    "anchor_hash": "ddab23ad449426b8f55b3600f40a0f5284c0b63d9a3608e75d1e4d8179ff547f",
-    "timestamp": "2026-09-25T13:23:50.876634+00:00"
-  },
-  {
-    "block_index": 10,
-    "anchor_hash": "a4e794da3f39f886a6a5929a07b28a199199d0b88c1cb0b1d36eae925344d1ae",
-    "timestamp": "2026-09-25T15:03:06.805237+00:00"
-  }
-]
-```
+## 7. REST API Reference
 
----
-
-### 7.4 Forensic Report JSON Schema (`data/reports/RPT-*.json`)
-```json
-{
-  "report_id": "RPT-20260926-071530",
-  "generated_at": "2026-09-26T07:15:30.123456+00:00",
-  "file_path": "d:\\SIH\\ps237\\data\\decrypted\\sample_bob_84a3903e.png",
-  "file_hash": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
-  "attribution": {
-    "status": "identified",
-    "user": "bob",
-    "confidence": 94.5,
-    "verdict": "HIGH_CONFIDENCE",
-    "watermark_id": "84a3903e2ee79279838d096b9fde543a"
-  },
-  "tamper_analysis": {
-    "tamper_detected": false,
-    "tamper_type": "none",
-    "severity": "NONE",
-    "details": ["No tampering indicators detected"]
-  },
-  "verification_signals": {
-    "crc_status": "VALID",
-    "vote_ratio": 1.0,
-    "sync_strength": "Strong",
-    "sync_score": 0.985,
-    "corruption_percentage": 0.0,
-    "multi_signal": {
-      "stable": true,
-      "agreement": "3/3",
-      "watermark_ids": [
-        "84a3903e2ee79279838d096b9fde543a",
-        "84a3903e2ee79279838d096b9fde543a",
-        "84a3903e2ee79279838d096b9fde543a"
-      ]
-    }
-  },
-  "ledger_audit": {
-    "ledger_valid": true,
-    "block_index": 5,
-    "timestamp": "2026-09-25T14:28:29.303117+00:00",
-    "nonce": "7d80ecbb849c1017b6a7cda8df7e5792",
-    "signature_valid": true
-  }
-}
-```
-
----
-
-## 8. Threat Model & Security Analysis
-
-| Threat / Attack Vector | Adversary Objective | SANKET Countermeasure & Mitigation | Empirical Resilience |
+| Endpoint | Method | Functionality | Auth / Security |
 | :--- | :--- | :--- | :--- |
-| **Exfiltration & Screen Capture** | Circumvent OS DRM to leak document | Watermark embedded into DCT coefficients of image itself. Cannot be stripped without destroying image visibility. | 100% Attributed |
-| **Lossy Compression (JPEG Q50–Q90)** | Eliminate high-frequency watermarks | Watermark placed exclusively in robust mid-frequency DCT coefficients `(2,2)...` with adaptive QIM $\Delta = 38-62 > \text{JPEG step}$. | Valid CRC at Q70; Attributed down to Q50 |
-| **Geometric Rotation / Skew** | Desynchronize 8×8 DCT grid | Periodic synchronization pattern on $(4,2)$ enables automated angular search over $\pm 5.5^\circ$ at $0.25^\circ$ resolution. | Auto-recovered up to $\pm 5.0^\circ$ |
-| **Spatial Cropping / Occlusion** | Remove watermarked regions | $3\times$ macro redundancy + 2-zone spatial spread spectrum interleaves bits across entire image. | Survives up to 30% area occlusion |
-| **Additive Noise (Gaussian / Salt & Pepper)** | Perturb pixel values to cause bit-errors | Majority voting across 24 votes/bit combined with CRC-16 checksum error detection. | Survives $\sigma = 10.0$ Gaussian noise |
-| **Multi-Cycle Perturbation** | Pass image through multiple platforms (e.g., WhatsApp $\rightarrow$ Twitter) | Multi-signal 3-way verification pipeline evaluates stability under re-quantization. | Survives $3\times$ multi-cycle JPEG |
-| **Collusion / Frame-Up** | Alice claims Bob leaked her file | Every decryption block is signed by the decrypting user's Ed25519 private key. Alice cannot forge Bob's digital signature. | Cryptographic Non-Repudiation |
-| **Admin Log Tampering (History Rewrite)** | Compromised admin modifies block and re-hashes ledger | Secondary periodic anchors (`anchors.json`) stored independently every 5 blocks catch forged recomputed chains. | Caught as `ANCHOR_MISMATCH` |
+| `/auth/users` | `GET` | List all registered user identities & PQC public keys | `X-API-KEY` |
+| `/auth/login` | `POST` | Switch active session persona | `X-API-KEY` |
+| `/auth/me` | `GET` | Get current logged-in identity & credentials | `X-API-KEY`, `X-User-ID` |
+| `/send` | `POST` | Single logical encryption & document distribution | `X-API-KEY`, `X-User-ID` |
+| `/inbox` | `GET` | List distributed documents with access checks | `X-API-KEY`, `X-User-ID` |
+| `/documents` | `GET` | List all documents in Document Registry | `X-API-KEY` |
+| `/documents/{id}` | `GET` | Retrieve document metadata & authorized recipients | `X-API-KEY` |
+| `/decrypt` | `POST` | Kyber decryption, DCT-QIM watermark & dual signing | `X-API-KEY`, `X-User-ID` |
+| `/download/decrypted/{f}`| `GET` | Authenticated download of watermarked image | `X-API-KEY` / Direct Link |
+| `/download/report/{id}` | `GET` | Download forensic JSON report | `X-API-KEY` / Direct Link |
+| `/download/encrypted/{pkg}`| `GET` | Download encrypted package zip archive | `X-API-KEY` / Direct Link |
+| `/verify` | `POST` | Forensic watermark extraction & identity attribution | `X-API-KEY` |
+| `/report` | `POST` | Comprehensive forensic tamper analysis report | `X-API-KEY` |
+| `/ledger` | `GET` | Audit ledger integrity, multi-sigs & secondary anchors | `X-API-KEY` |
+| `/ledger/blocks` | `GET` | Retrieve complete block chain with anchor flags | `X-API-KEY` |
+| `/ledger/tamper/modify` | `POST` | Simulate Block 0 payload mutation | `X-API-KEY` |
+| `/ledger/tamper/delete` | `POST` | Simulate Block 1 deletion | `X-API-KEY` |
+| `/ledger/tamper/recompute`| `POST` | Simulate chain rehash attack (anchor catch) | `X-API-KEY` |
+| `/ledger/tamper/restore` | `POST` | Restore ledger to pristine valid state | `X-API-KEY` |
+| `/demo-flow` | `POST` | 1-Click execution of full 8-stage lifecycle demo | `X-API-KEY` |
+| `/status` | `GET` | Operational health and ledger status metrics | `X-API-KEY` |
 
 ---
 
-## 9. Comprehensive REST API Reference
+## 8. Threat Model & Adversarial Resilience Matrix
 
-All requests accept header `X-API-KEY: sanket-admin-key-2026` or query parameter `?api_key=sanket-admin-key-2026`.
-
-| Method | Endpoint | Description | Request Payload | Response Summary |
-| :--- | :--- | :--- | :--- | :--- |
-| `POST` | `/encrypt` | Encrypts a PNG file with multi-recipient key wrapping | `multipart/form-data`: `file`, `recipients` (comma-sep) | `package_path`, `recipients`, `file_id` |
-| `POST` | `/decrypt` | Unwraps, watermarks, signs, and logs file | `multipart/form-data`: `package_path`, `user_id` | `output_path`, `watermark_id`, `block` |
-| `POST` | `/verify` | Ingests leaked file, extracts watermark & identifies source | `multipart/form-data`: `file`, `sync=true` | `user`, `confidence`, `verdict`, `crc_valid` |
-| `POST` | `/report` | Generates full forensic tamper classification report | `multipart/form-data`: `file`, `sync=true` | Full forensic JSON report + report ID |
-| `GET` | `/ledger` | Returns status of hash-chain and anchors | None | `ledger_status`, `chain_ok`, `anchor_ok` |
-| `GET` | `/ledger/blocks` | Returns full block list, anchors, and consensus state | None | Array of blocks, anchors, and consensus |
-| `POST` | `/ledger/tamper/modify` | Mutates Block #0 payload (Simulates record corruption) | None | Visual chain break test result |
-| `POST` | `/ledger/tamper/delete` | Deletes Block #1 (Simulates omission attack) | None | Severed pointer test result |
-| `POST` | `/ledger/tamper/recompute`| Alters Block #0 and recomputes all downstream hashes | None | Anchor mismatch test result |
-| `POST` | `/ledger/tamper/restore` | Resets ledger to pristine verified backup | None | Consensus restored result |
-| `GET` | `/shared/packages` | Lists all encrypted packages for LAN sharing | None | Array of available packages |
-| `POST` | `/demo-run` | Executes 1-click end-to-end judge flow | None | Full execution trace & verdict |
-| `GET` | `/status` | Operational health and file counts | None | System state, total decryptions, anchor index |
+| Attack Vector | Adversarial Mechanism | SANKET Defense Strategy | Detection Status |
+| :--- | :--- | :--- | :--- |
+| **Unauthorized Decryption** | Non-recipient attempts decryption | API gatekeeper denies access with HTTP 403; Kyber secret key absent | **PREVENTED** |
+| **Key Theft in Transit** | Intercepted network payload | Keys reside locally on nodes; KEM ciphertexts bound to recipient public keys | **PREVENTED** |
+| **JPEG Compression** | High lossy compression (Q50–Q90) | Mid-frequency DCT-QIM embedding with 24 votes/bit spread spectrum | **ATTRIBUTED (100%)** |
+| **Additive Noise** | Gaussian sensor noise ($\sigma = 3 - 15$) | Spatial interleaving across 2 zones + majority vote filtering | **ATTRIBUTED (99.3%)** |
+| **Spatial Cropping** | 10%–20% image area removed | Spread-spectrum redundancy (3x repetition across full raster) | **ATTRIBUTED (90-95%)** |
+| **Geometric Rotation** | Scanner skew / rotation up to $\pm 5.5^\circ$ | Dedicated `(4,2)` sync template try-and-verify angular recovery | **ATTRIBUTED (87-90%)** |
+| **False Attribution** | Clean / non-watermarked image tested | Zero-false-positive guard rejects unwatermarked rasters (0% confidence) | **REJECTED (0.0%)** |
+| **Block Mutation** | Attacker edits historical ledger record | Breaks SHA-256 hashchain linkage $\rightarrow$ `TAMPERED` status | **DETECTED** |
+| **Block Deletion** | Attacker removes intermediate block | Breaks pointer continuity $\rightarrow$ `TAMPERED` status | **DETECTED** |
+| **History Rewrite** | Attacker recomputes entire hash chain | Caught by periodic secondary anchors (`anchors.json`) $\rightarrow$ `ANCHOR_MISMATCH` | **DETECTED** |
+| **Repudiation** | Recipient claims they didn't decrypt | Dual digital signature (ML-DSA-65) committed to immutable ledger | **NON-REPUDIABLE** |
 
 ---
 
-## 10. Summary Checklist for Hackathon Presentation
+## 9. Conclusion
 
-1. **Architecture & Usability WOW Factor:**
-   - [x] Clean enterprise UI (Box DLP / ProtonDrive aesthetic, no neon/cyberpunk clutter).
-   - [x] Personas switcher (`Alice` / `Bob`) for instantaneous multi-device simulation.
-   - [x] Big Centered Result Screen with red bounding box highlighting tampered regions.
-   - [x] Connected Node DAG view and interactive Audit Log Data Table.
-   - [x] Deep Cryptographic Block Inspector modal.
-2. **Cryptographic Rigor:**
-   - [x] AES-256-GCM authenticated encryption.
-   - [x] X25519 ECDH + HKDF-SHA256 key encapsulation.
-   - [x] Ed25519 canonical record signing.
-   - [x] Zero raw bytes ever written to disk.
-3. **Forensic Robustness:**
-   - [x] 8×8 DCT-QIM with variance-adaptive step size.
-   - [x] 24 votes per watermark bit + CRC-16 checksum.
-   - [x] Dedicated $(4,2)$ sync template with try-and-verify rotation recovery.
-   - [x] Multi-signal 3-version consensus check.
-   - [x] Heuristic tamper classification (crop, noise, compression, rotation).
-4. **Tamper-Evident Ledger:**
-   - [x] Append-only SHA-256 hash chain.
-   - [x] Secondary state anchors committed every 5 blocks (`anchors.json`).
-   - [x] Chaos/Resilience testing suite demonstrating real-time fault detection and recovery.
+SANKET upgrades digital document distribution into an **unbreakable, mathematically verifiable provenance system**. By fusing **Post-Quantum Cryptography (Kyber & Dilithium)**, **DCT-QIM Invisible Watermarking**, and an **Anchored Multi-Signature Ledger**, SANKET provides unalterable attribution and court-admissible forensic evidence against insider threats.
