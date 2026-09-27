@@ -5,138 +5,181 @@
 
 ---
 
-## 1. Executive Summary & Problem Formulation
+## 1. System Overview & The Core Problem
 
-### 1.1 The Distribution Dilemma in Broadcast Encryption
-Sensitive documents are routinely distributed under a **broadcast-encrypt, individually-decrypt** paradigm: a sender encrypts a document once and distributes it to a group of authorized recipients, each of whom decrypts it independently using their own credentials.
+### The Broadcast-Encryption Dilemma
+When a sensitive document is shared with multiple recipients, standard broadcast encryption encrypts it once, and each recipient decrypts it independently using their own credentials. 
 
-Under this model:
-- The decrypted document is visually and bitwise identical across all recipients.
-- When an unauthorized leak occurs, **every recipient who possessed decryption capability is an equally plausible suspect**.
-- Access logs maintained on centralized servers fail: privileged administrators can retroactively alter or erase log entries.
-- Static watermarks applied prior to distribution fail because an identical watermark distributed to multiple recipients replicates the exact attribution problem it was intended to solve.
+```
+                                      ┌───► [Bob Decrypts] ────► Identical Document
+[Alice Encrypts Once] ──► Encrypted ──┼───► [Charlie Decrypts] ─► Identical Document
+                          Payload     └───► [David Decrypts] ──► Identical Document
+                                                         │
+                                               [Document Leaked!]
+                                                         ▼
+                                          WHO LEAKED IT? ALL ARE SUSPECTS!
+```
 
-### 1.2 The SANKET Solution
-**SANKET** resolves this challenge through an atomic, multi-stage cryptographic lifecycle:
+- **The Flaw**: Every recipient gets identical plaintext. If leaked, **all recipients are equally plausible suspects**.
+- **Central Logs Fail**: Server logs can be wiped or modified by a privileged administrator.
+- **Static Watermarks Fail**: An identical watermark shared with multiple parties solves nothing.
 
-$$\mathbf{Distribute} \longrightarrow \mathbf{Authorize} \longrightarrow \mathbf{Decrypt} \longrightarrow \mathbf{Attribute} \longrightarrow \mathbf{Verify}$$
+### The SANKET Solution
+SANKET creates an unbroken chain of cryptographic custody:
 
-1. **Single Logical Encryption with Post-Quantum Key Encapsulation**: Documents are encrypted once with symmetric authenticated encryption (**AES-256-GCM**). Ephemeral keys are individually encapsulated per recipient using NIST-standardized Post-Quantum KEM (**ML-KEM-768 / Kyber**).
-2. **Strict Session-Bound Authorization Gatekeeper**: The API gateway verifies that the active session user matches the requested identity (`X-User-ID`) and is an authorized recipient before permitting cryptographic operations. Unauthorized attempts are rejected with `HTTP 403 Forbidden`.
-3. **Dynamic Zero-Leak Forensic Watermarking at Moment of Decryption**: Plaintext is never written to disk in unwatermarked form. During in-memory decryption, a unique DCT-QIM watermark carrying recipient identity, file hash, timestamp, and a cryptographic session nonce is invisibly embedded into the raster.
-4. **Mandatory User-Side Post-Quantum Signing**: Each recipient must sign the canonical decryption record using their **own private ML-DSA-65 (Dilithium)** signing key. Signing is strictly tied to the active session with zero key reuse across identities.
-5. **Real Multi-Node Distributed Ledger (DLT)**: An immutable, peer-validated distributed ledger replaces simulated chains. Blocks are accepted only upon achieving consensus quorum: signed by **recipient + gateway authority + peer validator node(s)**. Each node maintains independent physical storage with zero shared directories.
-6. **Cross-Node Anchor Verification & Tamper Detection**: Periodic secondary cumulative snapshot anchors detect history-rewrites and rehash attacks. Mismatches across peer nodes immediately flag the ledger as **`COMPROMISED`**.
-7. **Cryptographically Verifiable Proof Bundles**: Forensic verification generates structured, self-contained JSON proof bundles verifying watermark CRC integrity, file hash, decrypted output hash, ledger linkage, anchor checkpoints, and all multi-party PQC signatures.
-8. **100% Offline & Air-Gapped Operation**: Complete local cryptographic execution with zero dependencies on external cloud KMS or public blockchain networks.
+$$\mathbf{Distribute} \longrightarrow \mathbf{Authorize} \longrightarrow \mathbf{Decrypt} \longrightarrow \mathbf{Consensus} \longrightarrow \mathbf{Attribute} \longrightarrow \mathbf{Verify}$$
+
+1. **Single Encryption + Post-Quantum Key Wrapping**: Encrypted once via **AES-256-GCM**. Ephemeral keys are wrapped individually using NIST FIPS 203 **ML-KEM-768 (Kyber)**.
+2. **Session-Bound Authorization**: Decryption requests are checked against the active session (`X-User-ID`). Unauthorized requests are rejected with `HTTP 403 Forbidden`.
+3. **In-Memory Watermarking at Decryption**: Plaintext is never written unwatermarked. A unique 2D DCT-QIM watermark with recipient identity, timestamp, and a random nonce is embedded in RAM with DC anti-clipping protection.
+4. **Mandatory User-Side Post-Quantum Signing**: The recipient signs the decryption event using their own NIST FIPS 204 **ML-DSA-65 (Dilithium)** private key.
+5. **Real Multi-Node Distributed Ledger (DLT)**: Blocks require consensus quorum: signed by **recipient + gateway + peer validator node**. Nodes store data independently on disk with no shared storage.
+6. **Secondary Cumulative Anchors**: Snapshot anchors computed every 5 blocks detect history manipulation. Any divergence flags the ledger as **`COMPROMISED`**.
+7. **Court-Grade Proof Bundles**: Self-contained JSON proof containers linking forensic evidence to the blockchain record.
 
 ---
 
-## 2. System Architecture
+## 2. High-Level Architecture Block Diagram
+
+The entire SANKET platform operates as a clear, four-stage cryptographic pipeline:
 
 ```mermaid
-flowchart TD
-    subgraph IdentityLayer ["1. Identity & Key Custody Layer (Air-Gapped / Offline)"]
-        U_ALICE["Alice (Sender)"]
-        U_BOB["Bob (Recipient)"]
-        U_NODE_A["Node A (Local Node)"]
-        U_NODE_B["Node B (Peer Validator)"]
-        SYS_AUTH["SANKET Gateway Authority"]
-        KEYSTORE[("Local Keystore: data/keys/{user_id}/<br/>• ML-KEM-768 (Kyber768 Keypair)<br/>• ML-DSA-65 (Dilithium3 Keypair)<br/>• Dual-Stack Ed25519 & X25519")]
-        U_ALICE -.-> KEYSTORE
-        U_BOB -.-> KEYSTORE
-        U_NODE_A -.-> KEYSTORE
-        U_NODE_B -.-> KEYSTORE
-        SYS_AUTH -.-> KEYSTORE
+flowchart LR
+    subgraph S1 ["Stage 1: Distribute"]
+        direction TB
+        A1["Alice (Sender)"] --> A2["AES-256-GCM<br/>Single Encryption"]
+        A2 --> A3["ML-KEM-768 (Kyber)<br/>Key Wrapped per Recipient"]
     end
 
-    subgraph DistributionLayer ["2. Distribution & Authorization Layer"]
-        U_ALICE -->|"POST /send (file, recipients=[bob])"| REGISTRY[("SQLite Registry & Document Store<br/>data/sanket.db (WAL Mode)")]
-        REGISTRY -->|"Single Encrypt (AES-256-GCM)"| PKG["Encrypted Package (data/encrypted/)<br/>• payload.enc (Single shared file)<br/>• metadata.json (Kyber-wrapped keys)"]
-        PKG -.->|"Wrapped Key 1"| KEM_BOB["Kyber-768 CT (Bob PK)"]
-        PKG -.->|"Wrapped Key 2"| KEM_ALICE["Kyber-768 CT (Alice PK)"]
+    subgraph S2 ["Stage 2: Decrypt & Watermark"]
+        direction TB
+        B1["Bob (Recipient)"] --> B2["Kyber Decapsulation<br/>(In-Memory AES Key)"]
+        B2 --> B3["DCT-QIM Watermark<br/>(Recipient + Nonce + CRC)"]
+        B3 --> B4["ML-DSA-65 (Dilithium)<br/>(Bob Signs Decryption)"]
     end
 
-    subgraph DecryptionLayer ["3. Authorized Decrypt & Watermarking Layer"]
-        U_BOB -->|"POST /decrypt (X-User-ID: bob)"| GATE{"Authorization & Session Gate:<br/>Is Bob ∈ recipients && session matches?"}
-        GATE -->|"Unauthorized"| REJECT["Deny Access (HTTP 403 Forbidden)"]
-        GATE -->|"Authorized"| UNWRAP["Kyber-768 Decapsulation (Bob SK) -> AES Key"]
-        UNWRAP --> AES_DEC["In-Memory Plaintext Recovery (Zero Disk Leak)"]
-        AES_DEC --> DCT_EMBED["DCT-QIM Watermark Embedder<br/>(user_id + file_id + timestamp + nonce + CRC-16)"]
-        DCT_EMBED --> USER_SIGN["User-Side Signing Enforcement:<br/>Recipient Signs Decryption Event (Bob Dilithium SK)"]
-        USER_SIGN --> GATEWAY_SIGN["Gateway Authority Signs Block Hash (System Dilithium SK)"]
+    subgraph S3 ["Stage 3: Multi-Node DLT"]
+        direction TB
+        C1["Gateway Signature<br/>(System Dilithium)"] --> C2["Peer Node Signature<br/>(Node B Dilithium)"]
+        C2 --> C3["Consensus Quorum<br/>(3-Party Signatures)"]
+        C3 --> C4["Independent Ledgers<br/>(Node A & Node B)"]
     end
 
-    subgraph DLTConsensus ["4. Multi-Node Distributed Ledger Consensus (Real Network)"]
-        GATEWAY_SIGN --> CANDIDATE["Candidate Block Created Locally"]
-        CANDIDATE -->|"POST /ledger/block/sign"| PEER_NODE["Peer Node (e.g. Node B :8001)<br/>• Validates candidate block<br/>• Signs block hash with Dilithium SK"]
-        PEER_NODE -->|"Peer Dilithium Signature"| QUORUM{"Consensus Quorum Check:<br/>Recipient + Gateway + ≥1 Peer"}
-        QUORUM -->|"Quorum Satisfied"| COMMIT["Commit Block to Local Ledger (ledger.json)"]
-        COMMIT -->|"POST /ledger/block/receive"| BROADCAST["Broadcast Committed Block to All Peers"]
-        COMMIT --> ANCHOR_CHECK{"Hit Interval (Every 5 Blocks)?"}
-        ANCHOR_CHECK -->|"Yes"| ANCHOR_COMPUTE["Compute Snapshot Anchor<br/>Compare with Peers (anchors.json)<br/>Mismatch -> Mark COMPROMISED"]
+    subgraph S4 ["Stage 4: Attribute & Prove"]
+        direction TB
+        D1["Leaked Image Scan"] --> D2["DCT-QIM Extraction<br/>(24 Votes/Bit + Sync)"]
+        D2 --> D3["Ledger Correlation<br/>(Attributed to Bob)"]
+        D3 --> D4["Proof Bundle (JSON)<br/>(Court-Grade Evidence)"]
     end
 
-    subgraph ForensicLayer ["5. Forensic Verification & Proof Bundle Generation"]
-        LEAK_FILE["Leaked / Attacked Document"] --> EXTRACTOR["Multi-Signal DCT-QIM Extractor<br/>(Original, Gaussian Blur, JPEG Q85)"]
-        EXTRACTOR --> SYNC_ALIGN["Geometric Sync Recovery (±5.5° search)"]
-        SYNC_ALIGN --> CONFIDENCE["Confidence Scoring Engine (0-100%)"]
-        CONFIDENCE --> LEDGER_QUERY["Ledger Watermark Query (query_by_watermark)"]
-        LEDGER_QUERY --> PROOF_GEN["Generate Proof Bundle JSON<br/>(CRC + hashes + ledger linkage + all PQC signatures)"]
-        PROOF_GEN --> PROOF_VERIFY["Cryptographic Proof Verification Engine<br/>POST /proof/verify -> Court-Grade Evidence"]
-    end
+    S1 ==>|"Encrypted Package"| S2
+    S2 ==>|"Signed Event"| S3
+    S3 -.->|"Immutable Record"| S4
+    D1 -.->|"Forensic Investigation"| S4
 ```
 
 ---
 
-## 3. End-to-End Cryptographic Protocol Flow
+## 3. Step-by-Step Architecture Flow Diagrams
+
+### Flow 1: Document Distribution (Alice Sends to Bob & Charlie)
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor Alice as Alice (Sender)
-    actor Bob as Bob (Recipient)
-    participant Origin as Origin Node (Node A :8000)
-    participant Peer as Peer Node (Node B :8001)
-    participant LocalLedger as Node A Ledger (ledger.json)
-    participant PeerLedger as Node B Ledger (ledger.json)
-    actor Auditor as Forensic Auditor
+flowchart TD
+    FILE["Original File (PNG)"] --> ENCR["1. AES-256-GCM Encryption<br/>(Generates random 256-bit Document Key K_doc)"]
+    ENCR --> PAYLOAD["payload.enc<br/>(Single shared encrypted ciphertext)"]
 
-    Note over Alice,Peer: Phase 0: Key Generation & Distribution
-    Alice->>Origin: POST /send (file.png, recipients: ["bob"])
-    Origin->>Origin: Encrypt once (AES-256-GCM) + Encapsulate key for Bob (ML-KEM-768)
-    Origin-->>Alice: Document registered & encapsulated package saved (data/encrypted/)
+    K_DOC["Key K_doc"] --> KEM1["2. Wrap for Bob<br/>ML-KEM-768 Encapsulation with Bob's Public Key"]
+    K_DOC --> KEM2["3. Wrap for Charlie<br/>ML-KEM-768 Encapsulation with Charlie's Public Key"]
 
-    Note over Bob,Peer: Phase 3 & Phase 2: Decrypt, User-Side Sign & Multi-Node Consensus
-    Bob->>Origin: POST /decrypt (package_path, user="bob", Header: X-User-ID: "bob")
-    Origin->>Origin: Verify active session (Bob) and recipient authorization
-    Origin->>Origin: Decapsulate AES key using Bob's Kyber Secret Key
-    Origin->>Origin: In-memory DCT-QIM watermarking (unique session nonce + CRC-16)
-    Origin->>Origin: User-side signing: Bob signs decryption event payload with Dilithium SK
-    Origin->>Origin: Gateway authority signs block hash with System Dilithium SK
-    Origin->>Origin: Assemble candidate block (index, data, prev_hash, recipient & gateway sigs)
+    KEM1 --> META["metadata.json<br/>(Contains wrapped keys for each recipient)"]
+    KEM2 --> META
 
-    Note over Origin,Peer: Peer Consensus Quorum Flow
-    Origin->>Peer: POST /ledger/block/sign (candidate block)
-    Peer->>Peer: Validate block structure, hash, and recipient signature
-    Peer->>Peer: Sign block hash with Node B Dilithium private key
-    Peer-->>Origin: Return Node B signature & public key
-    Origin->>Origin: Verify Node B signature and confirm quorum (3/3 signatures)
-    Origin->>LocalLedger: Append committed block to Node A ledger.json
-    Origin->>Peer: POST /ledger/block/receive (broadcast final committed block)
-    Peer->>PeerLedger: Validate linkage & append to Node B ledger.json
-    Origin-->>Bob: Watermarked image download URL + proof token
+    PAYLOAD --> PKG["data/encrypted/{pkg_id}/<br/>(Encrypted Package Folder)"]
+    META --> PKG
+    PKG --> SQLITE["SQLite Database (data/sanket.db)<br/>Records document_id, sender, recipients, status='pending'"]
+```
 
-    Note over Bob,Auditor: Phase 1: Exfiltration, Forensic Attribution & Proof Verification
-    Note over Bob,Auditor: Document leaks (adversary crops, compresses, or modifies the file)
-    Auditor->>Origin: POST /verify (leaked_file.png)
-    Origin->>Origin: Extract watermark across multi-signal perturbation channels
-    Origin->>LocalLedger: Lookup watermark ID in ledger
-    Origin->>Origin: Generate Proof Bundle JSON (PRF-xxxx)
-    Origin-->>Auditor: Attribution Verdict (Bob identified, 100% match) + Proof Bundle JSON
-    Auditor->>Origin: POST /proof/verify (proof_bundle)
-    Origin->>Origin: Verify CRC, file hash, decrypted hash, hash chain linkage, anchor, and Dilithium signatures (Bob + System + Node B)
-    Origin-->>Auditor: Cryptographically Validated: { valid: true, reason: "All checks passed" }
+---
+
+### Flow 2: In-Memory Decryption & User Signing (Bob Decrypts)
+
+```mermaid
+flowchart TD
+    REQ["Bob Requests Decryption<br/>POST /decrypt (Header: X-User-ID: 'bob')"] --> GATE{"Authorization Check:<br/>1. Is Bob an authorized recipient?<br/>2. Does session match 'bob'?"}
+
+    GATE -->|"No"| REJECT["HTTP 403 Forbidden<br/>(Access Denied)"]
+    GATE -->|"Yes"| UNWRAP["ML-KEM-768 Decapsulation<br/>(Bob's Private Key unwraps K_doc)"]
+
+    UNWRAP --> RAM["In-Memory Plaintext Recovery<br/>(Zero disk writes of raw plaintext)"]
+    RAM --> WM["2D DCT-QIM Watermarking Embedder<br/>• Mid-frequency coeffs: (2,2), (3,1), (1,3), (2,3)<br/>• Dedicated (4,2) Sync Template<br/>• Orthogonal DC Anti-Clipping Protection"]
+
+    WM --> RECORD["Assemble Decryption Event Payload:<br/>• watermark_id • user_id • timestamp<br/>• file_hash • decrypted_hash"]
+
+    RECORD --> BOB_SIGN["User-Side Signing Enforcement:<br/>Bob signs payload with own ML-DSA-65 Dilithium Key"]
+    BOB_SIGN --> OUT["Save Watermarked Output Image<br/>data/decrypted/file_bob_xxxx.png"]
+```
+
+---
+
+### Flow 3: Multi-Node P2P Consensus Quorum (Real Distributed Network)
+
+```mermaid
+flowchart LR
+    subgraph OriginNode ["Origin Node (Node A :8000)"]
+        CAND["Candidate Block B<br/>• Recipient Sig (Bob)<br/>• Gateway Sig (System)"]
+        COMMIT_A[("Node A Ledger<br/>data/ledger/ledger.json")]
+    end
+
+    subgraph ConsensusProtocol ["P2P HTTP Consensus Flow"]
+        direction TB
+        STEP1["1. POST /ledger/block/sign<br/>(Candidate sent to Peer)"]
+        STEP2["2. Node B Validates Block<br/>(Checks hash & Bob's sig)"]
+        STEP3["3. Node B Signs Block Hash<br/>(with Node B Dilithium Key)"]
+        STEP4{"4. Quorum Check:<br/>Recipient + Gateway + >=1 Peer"}
+        STEP5["5. POST /ledger/block/receive<br/>(Broadcast committed block)"]
+
+        STEP1 --> STEP2 --> STEP3 --> STEP4 -->|"Quorum Met"| STEP5
+    end
+
+    subgraph PeerNode ["Peer Validator (Node B :8001)"]
+        COMMIT_B[("Node B Ledger<br/>data/nodes/node_B/ledger/ledger.json")]
+    end
+
+    CAND --> STEP1
+    STEP4 -->|"Append"| COMMIT_A
+    STEP5 -->|"Append"| COMMIT_B
+```
+
+---
+
+### Flow 4: Forensic Leak Verification & Cryptographic Proof Verification
+
+```mermaid
+flowchart TD
+    subgraph Extraction ["1. Forensic Extraction Engine"]
+        LEAK["Leaked Image File"] --> SYNC["(4,2) Sync Template Correlation<br/>Detects rotation skew (-5.5° to +5.5°)"]
+        SYNC --> ROT["Auto-Rotate Image to Canonical Axis"]
+        ROT --> MULTI["Multi-Signal DCT-QIM Extractor<br/>(Original + Blurred + JPEG Q85)"]
+        MULTI --> VOTE["24 Votes/Bit Majority Vote<br/>+ CRC-16 Checksum Verification"]
+    end
+
+    subgraph Attribution ["2. Ledger Query & Correlation"]
+        VOTE --> QUERY["Query Distributed Ledger<br/>(Exact Match or Hamming Distance <= 4 bits)"]
+        QUERY --> MATCH["Block Matched in Blockchain<br/>Decrypted by @bob on 2026-09-27"]
+        MATCH --> GEN_PROOF["Generate Cryptographic Proof Bundle<br/>data/proofs/PRF-xxxx.json"]
+    end
+
+    subgraph Verification ["3. Cryptographic Proof Engine (POST /proof/verify)"]
+        GEN_PROOF --> V1["V1: Watermark CRC Valid"]
+        GEN_PROOF --> V2["V2: File Hash Valid (64 hex)"]
+        GEN_PROOF --> V3["V3: Decrypted Output Hash Valid"]
+        GEN_PROOF --> V4["V4: Hash Chain Linkage & Continuity"]
+        GEN_PROOF --> V5["V5: Secondary Snapshot Anchor Valid"]
+        GEN_PROOF --> V6["V6: Multi-Party PQC Signatures Valid<br/>(Bob + Gateway + Node B)"]
+
+        V1 & V2 & V3 & V4 & V5 & V6 --> COURT["COURT-GRADE FORENSIC VERDICT:<br/>HIGH_CONFIDENCE (100% Attributed to Bob)"]
+    end
 ```
 
 ---
@@ -145,11 +188,12 @@ sequenceDiagram
 
 | Component | Standard / Technology | Implementation Details |
 | :--- | :--- | :--- |
-| **Post-Quantum Key Exchange** | NIST FIPS 203 (ML-KEM-768 / Kyber) | Ephemeral AES-256 key encapsulation; 1,184-byte PK, 2,400-byte SK, 1,088-byte CT |
-| **Post-Quantum Digital Signatures** | NIST FIPS 204 (ML-DSA-65 / Dilithium) | Non-repudiation signing; 1,952-byte PK, 4,032-byte SK, 3,309-byte signature |
-| **Dual-Stack Fallback** | RFC 8032 (Ed25519) & RFC 7748 (X25519) | Automatic backwards-compatibility fallback |
+| **Post-Quantum Key Exchange** | NIST FIPS 203 (ML-KEM-768 / Kyber) | Ephemeral AES-256 key encapsulation; 1,184B PK, 2,400B SK, 1,088B CT |
+| **Post-Quantum Digital Signatures** | NIST FIPS 204 (ML-DSA-65 / Dilithium) | Non-repudiation signing; 1,952B PK, 4,032B SK, 3,309B signature |
+| **Dual-Stack Fallback** | RFC 8032 (Ed25519) & RFC 7748 (X25519) | Dual-stack backwards-compatibility fallback |
 | **Symmetric Payload Cipher** | AES-256-GCM | Authenticated encryption with 96-bit random IV; single logical encryption |
-| **Invisible Watermarking** | 2D DCT-QIM on Y-channel (YCbCr) | Mid-frequency coefficients `(2,2),(3,1),(1,3),(2,3)`; variance-adaptive $\Delta \in [38.0, 62.0]$ |
+| **Invisible Watermarking** | 2D DCT-QIM on Y-channel (YCbCr) | Mid-frequency coefficients `(2,2),(3,1),(1,3),(2,3)`; adaptive step $\Delta \in [38.0, 62.0]$ |
+| **DC Anti-Clipping Protection** | Orthogonal DC Compensation | Shifts DC coefficient `(0,0)` on boundary blocks to prevent spatial clipping at 255/0 |
 | **Payload Structure** | 144 bits (128-bit ID + 16-bit CRC) | Dual-zone spread-spectrum repetition, 24 votes/bit, dedicated `(4,2)` sync template |
 | **Geometric Synchronization** | Angular Cross-Correlation Search | Dedicated periodic template in coefficient `(4,2)`; searches $[-5.5^\circ, +5.5^\circ]$ in $0.5^\circ$ steps |
 | **Distributed Ledger Technology (DLT)** | Multi-Node Hash Chain with Consensus Quorum | Peer-to-peer HTTP network; independent physical ledgers per node; zero shared storage |
@@ -171,30 +215,30 @@ Implemented in [`modules/proof/proof_bundle.py`](file:///d:/SIH/ps237/modules/pr
 #### Proof Bundle Structure
 ```json
 {
-  "watermark_id": "c33376d993ac6b52eff9d9b894224b43",
-  "user_id": "alice",
-  "timestamp": "2026-09-27T14:34:38.574901+00:00",
+  "watermark_id": "f0402966c4a79cc2ca98e4c67014b474",
+  "user_id": "bob",
+  "timestamp": "2026-09-27T15:33:50.128401+00:00",
   "file_hash": "66ed6ed129e81faf67d4be3ed2349ceb2bdf4b6cf330bfc703720a6c4c3a89b6",
-  "decrypted_hash": "a6d30edfea40d97eb97433b05361cc86a0e5290a0c21697c4cbba56adaf62110",
+  "decrypted_hash": "41fa8912e9b940e7da3c8913b1904a11b0e791240188b4081c7e63b34591a2bc",
   "ledger": {
-    "block_index": 0,
-    "prev_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-    "block_hash": "8f3b2591a38402db399b1ef0598823f66c1b3f9dc3cf200921434c76063ad46c",
+    "block_index": 5,
+    "prev_hash": "8f3b2591a38402db399b1ef0598823f66c1b3f9dc3cf200921434c76063ad46c",
+    "block_hash": "cb104928ac8129480bcde1234918237490182347102934812034981203498123",
     "anchor_hash": "5d2f8319a9240bc1284ae9876543210fedcba9876543210fedcba9876543210f"
   },
   "signatures": {
-    "recipient": "07eae737e8398dbcba1c9edb1934a69f8015cf02497f...",
-    "gateway": "466b94df39802a78c3855a20c21914dffa5e26aa751...",
+    "recipient": "07eae737e8398dbcba1c9edb1934a6...",
+    "gateway": "466b94df39802a78c3855a20c21914...",
     "peers": [
       {
         "node_id": "node_B",
-        "signature": "eb4854d03888bd63af2544254e030de3e5b6028a4..."
+        "signature": "eb4854d03888bd63af2544254e030..."
       }
     ]
   },
   "verification": {
     "crc_valid": true,
-    "confidence": 100.0,
+    "confidence": 91.0,
     "verdict": "HIGH_CONFIDENCE"
   }
 }
@@ -231,7 +275,7 @@ Configured via [`data/node_config.json`](file:///d:/SIH/ps237/data/node_config.j
 ```
 Each node maintains its own Dilithium keypair in `data/keys/{node_id}/` and independent storage in `data/nodes/{node_id}/ledger/` (or `data/ledger/` for primary node). **No shared storage exists between nodes.**
 
-#### Consensus Quorum & Block Flow
+#### Consensus Quorum Rule
 A block is accepted into the distributed ledger **only if signed by**:
 - The recipient (using their private Dilithium key).
 - The gateway authority (`system`).
@@ -239,25 +283,10 @@ A block is accepted into the distributed ledger **only if signed by**:
 
 $$\text{BlockAccepted}(B) \iff \text{Valid}(S_{\text{recipient}}) \land \text{Valid}(S_{\text{gateway}}) \land \exists p \in \text{Peers}: \text{Valid}(S_p)$$
 
-**Decryption Block Flow**:
-1. Origin node generates candidate block locally.
-2. Origin node sends block to peers via HTTP `POST /ledger/block/sign`.
-3. Each peer validates block hash and recipient signature, signs the block hash with its Dilithium key, and returns the signature.
-4. Origin node verifies peer signatures, verifies quorum, and appends the block to its local ledger.
-5. Origin node broadcasts the committed block to peers via HTTP `POST /ledger/block/receive`.
-6. Peer nodes validate block linkage and consensus quorum, and commit to their independent ledgers.
-
-#### Startup Ledger Synchronization
-FastAPI startup lifecycle (`@app.on_event("startup")`):
-1. Queries all configured peers via `GET /ledger/sync`.
-2. Validates peer block chains and multi-signatures.
-3. Automatically adopts the longest valid chain.
-
-#### Periodic Anchor Verification
-Every 5 blocks (`ANCHOR_INTERVAL = 5`):
-1. Node computes snapshot anchor: $\text{SHA256}(\text{canonical}(\text{ledger snapshot}))$.
-2. Node compares anchor against peer nodes via `GET /ledger/sync`.
-3. Any mismatch triggers tamper isolation, marking the ledger status as **`COMPROMISED`**.
+#### Secondary Cumulative Anchors & Cross-Node Tamper Detection
+Every 5 blocks (`ANCHOR_INTERVAL = 5`), each node computes a cumulative snapshot anchor:
+$$\text{Anchor}_m = \text{SHA256}(\text{canonical}(B_0, B_1, \dots, B_{5m-1}))$$
+Nodes compare cumulative anchors across peers via `GET /ledger/sync`. Any discrepancy immediately isolates the tampering node and marks the ledger status as **`COMPROMISED`**.
 
 ---
 

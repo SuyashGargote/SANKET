@@ -30,59 +30,144 @@ $$\mathbf{Distribute} \longrightarrow \mathbf{Authorize} \longrightarrow \mathbf
 
 ---
 
-## 2. High-Level Architecture (HLD)
+## 2. High-Level Architecture Block Diagram
+
+The SANKET platform operates as a clear, sequential 4-stage cryptographic pipeline:
+
+```mermaid
+flowchart LR
+    subgraph S1 ["Stage 1: Distribute"]
+        direction TB
+        A1["Alice (Sender)"] --> A2["AES-256-GCM<br/>Single Encryption"]
+        A2 --> A3["ML-KEM-768 (Kyber)<br/>Key Wrapped per Recipient"]
+    end
+
+    subgraph S2 ["Stage 2: Decrypt & Watermark"]
+        direction TB
+        B1["Bob (Recipient)"] --> B2["Kyber Decapsulation<br/>(In-Memory AES Key)"]
+        B2 --> B3["DCT-QIM Watermark<br/>(Recipient + Nonce + CRC)"]
+        B3 --> B4["ML-DSA-65 (Dilithium)<br/>(Bob Signs Decryption)"]
+    end
+
+    subgraph S3 ["Stage 3: Multi-Node DLT"]
+        direction TB
+        C1["Gateway Signature<br/>(System Dilithium)"] --> C2["Peer Node Signature<br/>(Node B Dilithium)"]
+        C2 --> C3["Consensus Quorum<br/>(3-Party Signatures)"]
+        C3 --> C4["Independent Ledgers<br/>(Node A & Node B)"]
+    end
+
+    subgraph S4 ["Stage 4: Attribute & Prove"]
+        direction TB
+        D1["Leaked Image Scan"] --> D2["DCT-QIM Extraction<br/>(24 Votes/Bit + Sync)"]
+        D2 --> D3["Ledger Correlation<br/>(Attributed to Bob)"]
+        D3 --> D4["Proof Bundle (JSON)<br/>(Court-Grade Evidence)"]
+    end
+
+    S1 ==>|"Encrypted Package"| S2
+    S2 ==>|"Signed Event"| S3
+    S3 -.->|"Immutable Record"| S4
+    D1 -.->|"Forensic Investigation"| S4
+```
+
+---
+
+### 2.1 Stage 1: Document Distribution Flow (`POST /send`)
 
 ```mermaid
 flowchart TD
-    subgraph IdentityLayer ["1. Identity & Key Custody Layer (Air-Gapped)"]
-        U_ALICE["Alice (Sender)"]
-        U_BOB["Bob (Recipient)"]
-        U_CHARLIE["Charlie (Auditor)"]
-        NODE_A["Node A (Local Node)"]
-        NODE_B["Node B (Peer Validator)"]
-        SYS_GATEWAY["SANKET Security Gateway"]
-        LOCAL_KEYS[("Local Keystore: data/keys/{user_id}/<br/>• ML-KEM-768 (Kyber768 Keypair)<br/>• ML-DSA-65 (Dilithium3 Keypair)")]
-        U_ALICE -.-> LOCAL_KEYS
-        U_BOB -.-> LOCAL_KEYS
-        NODE_A -.-> LOCAL_KEYS
-        NODE_B -.-> LOCAL_KEYS
-        SYS_GATEWAY -.-> LOCAL_KEYS
+    FILE["Original File (PNG)"] --> ENCR["1. AES-256-GCM Encryption<br/>(Generates random 256-bit Document Key K_doc)"]
+    ENCR --> PAYLOAD["payload.enc<br/>(Single shared encrypted ciphertext)"]
+
+    K_DOC["Key K_doc"] --> KEM1["2. Wrap for Bob<br/>ML-KEM-768 Encapsulation with Bob's Public Key"]
+    K_DOC --> KEM2["3. Wrap for Charlie<br/>ML-KEM-768 Encapsulation with Charlie's Public Key"]
+
+    KEM1 --> META["metadata.json<br/>(Contains wrapped keys for each recipient)"]
+    KEM2 --> META
+
+    PAYLOAD --> PKG["data/encrypted/{pkg_id}/<br/>(Encrypted Package Folder)"]
+    META --> PKG
+    PKG --> SQLITE["SQLite Database (data/sanket.db)<br/>Records document_id, sender, recipients, status='pending'"]
+```
+
+---
+
+### 2.2 Stage 2: In-Memory Decryption & User Signing (`POST /decrypt`)
+
+```mermaid
+flowchart TD
+    REQ["Bob Requests Decryption<br/>POST /decrypt (Header: X-User-ID: 'bob')"] --> GATE{"Authorization Check:<br/>1. Is Bob an authorized recipient?<br/>2. Does session match 'bob'?"}
+
+    GATE -->|"No"| REJECT["HTTP 403 Forbidden<br/>(Access Denied)"]
+    GATE -->|"Yes"| UNWRAP["ML-KEM-768 Decapsulation<br/>(Bob's Private Key unwraps K_doc)"]
+
+    UNWRAP --> RAM["In-Memory Plaintext Recovery<br/>(Zero disk writes of raw plaintext)"]
+    RAM --> WM["2D DCT-QIM Watermarking Embedder<br/>• Mid-frequency coeffs: (2,2), (3,1), (1,3), (2,3)<br/>• Dedicated (4,2) Sync Template<br/>• Orthogonal DC Anti-Clipping Protection"]
+
+    WM --> RECORD["Assemble Decryption Event Payload:<br/>• watermark_id • user_id • timestamp<br/>• file_hash • decrypted_hash"]
+
+    RECORD --> BOB_SIGN["User-Side Signing Enforcement:<br/>Bob signs payload with own ML-DSA-65 Dilithium Key"]
+    BOB_SIGN --> OUT["Save Watermarked Output Image<br/>data/decrypted/file_bob_xxxx.png"]
+```
+
+---
+
+### 2.3 Stage 3: Multi-Node P2P Consensus Quorum (Node A & Node B DLT)
+
+```mermaid
+flowchart LR
+    subgraph OriginNode ["Origin Node (Node A :8000)"]
+        CAND["Candidate Block B<br/>• Recipient Sig (Bob)<br/>• Gateway Sig (System)"]
+        COMMIT_A[("Node A Ledger<br/>data/ledger/ledger.json")]
     end
 
-    subgraph DistributionLayer ["2. Distribution & Authorization Layer"]
-        U_ALICE -->|"POST /send (file, recipients=[bob])"| REGISTRY[("SQLite Registry & Document Store<br/>data/sanket.db (WAL Mode)")]
-        REGISTRY -->|"Single Encrypt (AES-256-GCM)"| PKG["Encrypted Package (data/encrypted/)<br/>• payload.enc (Single shared file)<br/>• metadata.json (Kyber-wrapped keys)"]
-        PKG -.->|"Wrapped Key 1"| KEM_BOB["Kyber-768 CT (Bob PK)"]
-        PKG -.->|"Wrapped Key 2"| KEM_ALICE["Kyber-768 CT (Alice PK)"]
+    subgraph ConsensusProtocol ["P2P HTTP Consensus Flow"]
+        direction TB
+        STEP1["1. POST /ledger/block/sign<br/>(Candidate sent to Peer)"]
+        STEP2["2. Node B Validates Block<br/>(Checks hash & Bob's sig)"]
+        STEP3["3. Node B Signs Block Hash<br/>(with Node B Dilithium Key)"]
+        STEP4{"4. Quorum Check:<br/>Recipient + Gateway + >=1 Peer"}
+        STEP5["5. POST /ledger/block/receive<br/>(Broadcast committed block)"]
+
+        STEP1 --> STEP2 --> STEP3 --> STEP4 -->|"Quorum Met"| STEP5
     end
 
-    subgraph DecryptionLayer ["3. Authorized Decrypt & Watermarking Layer"]
-        U_BOB -->|"POST /decrypt (X-User-ID: bob)"| GATE{"Authorization Gate:<br/>Is Bob ∈ recipients && session valid?"}
-        GATE -->|"Unauthorized"| REJECT["Deny Access (HTTP 403 Forbidden)"]
-        GATE -->|"Authorized"| UNWRAP["Kyber-768 Decapsulation (Bob SK) -> AES Key"]
-        UNWRAP --> AES_DEC["In-Memory Plaintext Recovery (Zero Disk Leak)"]
-        AES_DEC --> DCT_EMBED["DCT-QIM Watermark Embedder<br/>(user_id + file_id + timestamp + nonce + CRC-16)"]
-        DCT_EMBED --> USER_SIGN["User-Side Signing Enforcement:<br/>Recipient Signs Decryption Event (Bob Dilithium SK)"]
-        USER_SIGN --> GATEWAY_SIGN["Gateway Authority Signs Block Hash (System Dilithium SK)"]
+    subgraph PeerNode ["Peer Validator (Node B :8001)"]
+        COMMIT_B[("Node B Ledger<br/>data/nodes/node_B/ledger/ledger.json")]
     end
 
-    subgraph DLTConsensus ["4. Multi-Node Distributed Ledger Consensus (Real Network)"]
-        GATEWAY_SIGN --> CANDIDATE["Candidate Block Created Locally"]
-        CANDIDATE -->|"POST /ledger/block/sign"| PEER_NODE["Peer Node (Node B :8001)<br/>• Validates candidate block<br/>• Signs block hash with Dilithium SK"]
-        PEER_NODE -->|"Peer Dilithium Signature"| QUORUM{"Consensus Quorum Check:<br/>Recipient + Gateway + ≥1 Peer"}
-        QUORUM -->|"Quorum Satisfied"| COMMIT["Commit Block to Local Ledger (ledger.json)"]
-        COMMIT -->|"POST /ledger/block/receive"| BROADCAST["Broadcast Committed Block to All Peers"]
-        COMMIT --> ANCHOR_CHECK{"Hit Interval (Every 5 Blocks)?"}
-        ANCHOR_CHECK -->|"Yes"| ANCHOR_COMPUTE["Compute Snapshot Anchor<br/>Compare with Peers (anchors.json)<br/>Mismatch -> Mark COMPROMISED"]
+    CAND --> STEP1
+    STEP4 -->|"Append"| COMMIT_A
+    STEP5 -->|"Append"| COMMIT_B
+```
+
+---
+
+### 2.4 Stage 4: Forensic Leak Attribution & Cryptographic Proof Verification
+
+```mermaid
+flowchart TD
+    subgraph Extraction ["1. Forensic Extraction Engine"]
+        LEAK["Leaked Image File"] --> SYNC["(4,2) Sync Template Correlation<br/>Detects rotation skew (-5.5° to +5.5°)"]
+        SYNC --> ROT["Auto-Rotate Image to Canonical Axis"]
+        ROT --> MULTI["Multi-Signal DCT-QIM Extractor<br/>(Original + Blurred + JPEG Q85)"]
+        MULTI --> VOTE["24 Votes/Bit Majority Vote<br/>+ CRC-16 Checksum Verification"]
     end
 
-    subgraph ForensicLayer ["5. Forensic Attribution & Proof Bundle Engine"]
-        LEAK_FILE["Leaked / Attacked Document"] --> EXTRACTOR["Multi-Signal DCT-QIM Extractor<br/>(Original, Gaussian Blur, JPEG Q85)"]
-        EXTRACTOR --> SYNC_ALIGN["Geometric Sync Recovery (±5.5° search)"]
-        SYNC_ALIGN --> CONFIDENCE["Confidence Scoring Engine (0-100%)"]
-        CONFIDENCE --> LEDGER_QUERY["Ledger Watermark Query (query_by_watermark)"]
-        LEDGER_QUERY --> PROOF_GEN["Generate Proof Bundle JSON<br/>(CRC + hashes + ledger linkage + all PQC signatures)"]
-        PROOF_GEN --> PROOF_VERIFY["Cryptographic Proof Verification Engine<br/>POST /proof/verify -> Court-Grade Evidence"]
+    subgraph Attribution ["2. Ledger Query & Correlation"]
+        VOTE --> QUERY["Query Distributed Ledger<br/>(Exact Match or Hamming Distance <= 4 bits)"]
+        QUERY --> MATCH["Block Matched in Blockchain<br/>Decrypted by @bob on 2026-09-27"]
+        MATCH --> GEN_PROOF["Generate Cryptographic Proof Bundle<br/>data/proofs/PRF-xxxx.json"]
+    end
+
+    subgraph Verification ["3. Cryptographic Proof Engine (POST /proof/verify)"]
+        GEN_PROOF --> V1["V1: Watermark CRC Valid"]
+        GEN_PROOF --> V2["V2: File Hash Valid (64 hex)"]
+        GEN_PROOF --> V3["V3: Decrypted Output Hash Valid"]
+        GEN_PROOF --> V4["V4: Hash Chain Linkage & Continuity"]
+        GEN_PROOF --> V5["V5: Secondary Snapshot Anchor Valid"]
+        GEN_PROOF --> V6["V6: Multi-Party PQC Signatures Valid<br/>(Bob + Gateway + Node B)"]
+
+        V1 & V2 & V3 & V4 & V5 & V6 --> COURT["COURT-GRADE FORENSIC VERDICT:<br/>HIGH_CONFIDENCE (100% Attributed to Bob)"]
     end
 ```
 
