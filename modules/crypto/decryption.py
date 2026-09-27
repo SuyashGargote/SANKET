@@ -23,7 +23,6 @@ from typing import Optional
 from config import DECRYPTED_DIR
 from modules.crypto.encryption import decrypt_file_raw
 from modules.crypto.signature import load_private_key, sign_decryption_event
-from modules.ledger.hashchain import append_record
 from modules.watermark.embedder import embed_watermark
 from utils.helpers import (
     generate_file_id,
@@ -104,6 +103,7 @@ def decrypt_file(pkg_dir: str, user_id: str, active_session_user: Optional[str] 
     record["recipient_signature"] = signature
 
     # ── Step 7: Append to ledger (distributed multi-signature consensus) ──
+    from modules.ledger.hashchain import append_record
     block = append_record(record)
 
     # ── Step 8: Save watermarked output ──

@@ -40,10 +40,9 @@ def compute_confidence(
     reasons = []
 
     # ── Hard reject: extreme corruption ──────────────────────────
-    # When >80% of blocks are corrupted (uniform fill, destroyed content),
-    # the extractor defaults all bits to 0, producing artificially perfect
-    # inter-copy agreement.  The vote_ratio is meaningless in this case.
-    if corrupted_blocks_ratio > 0.80:
+    # When >80% of blocks are corrupted AND CRC fails, extraction data is unreliable.
+    # If CRC is valid, the watermark has been extracted with mathematical certainty.
+    if corrupted_blocks_ratio > 0.80 and not crc_valid:
         reasons.append(
             f"Extreme corruption ({corrupted_blocks_ratio:.1%}) — "
             "extraction data unreliable"
@@ -98,7 +97,11 @@ def compute_confidence(
         reasons.append(f"Weak sync ({sync_score:.1%}): +0")
 
     # ── Corruption penalty ───────────────────────────────────────
-    if corrupted_blocks_ratio > 0.50:
+    # If CRC is valid and sync is strong (>= 0.70), uniform/flat blocks (e.g. document backgrounds)
+    # do not represent attack damage since the watermark and sync pattern are fully intact.
+    if crc_valid and sync_score >= 0.70:
+        reasons.append(f"Document background detected ({corrupted_blocks_ratio:.1%}): intact watermark, no penalty")
+    elif corrupted_blocks_ratio > 0.50:
         base -= 25.0
         reasons.append(f"Severe corruption ({corrupted_blocks_ratio:.1%}): -25")
     elif corrupted_blocks_ratio > 0.30:

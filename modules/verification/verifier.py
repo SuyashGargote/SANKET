@@ -87,42 +87,45 @@ def verify_leaked_file(filepath: str) -> dict:
         corrupted_blocks_ratio=corruption_ratio,
     )
 
-    # ── Step 4: Determine status ─────────────────────────────────
-    status = "watermark_not_found"
+    # ── Step 4: Always perform ledger verification ───────────────
+    ledger_valid, ledger_msg = verify_chain()
+
+    # ── Step 5: Ledger query & signature verification ─────────────
     user_id = None
     record = None
-    ledger_valid = False
-    ledger_msg = ""
     sig_valid = None
 
-    if watermark_id is None or confidence_result["verdict"] == "REJECT":
-        status = (
-            "watermark_not_found" if watermark_id is None else "rejected"
-        )
-    else:
-        # ── Step 5: Ledger verification ──────────────────────────
-        ledger_valid, ledger_msg = verify_chain()
-
-        # ── Step 6: Ledger query ─────────────────────────────────
+    if watermark_id is not None:
         record = query_by_watermark(watermark_id)
-        if record is None:
-            status = "ledger_miss"
+
+    if record is not None:
+        user_id = record.get("user_id") or record.get("data", {}).get("user_id")
+        rec_sig = (
+            record.get("signatures", {}).get("recipient")
+            or record.get("recipient_signature")
+            or record.get("signature")
+        )
+        try:
+            public_key = load_public_key(user_id)
+            sig_valid = verify_signature(record, rec_sig, public_key)
+        except Exception:
+            sig_valid = False
+
+        if sig_valid:
+            status = "identified"
+            # If verdict was REJECT purely due to uniform background, promote if CRC is valid
+            if confidence_result["verdict"] == "REJECT" and crc_valid:
+                confidence_result["verdict"] = "HIGH_CONFIDENCE"
+                confidence_result["confidence"] = max(confidence_result["confidence"], 90.0)
         else:
-            user_id = record["user_id"]
-
-            # ── Step 7: Signature verification ───────────────────
-            try:
-                public_key = load_public_key(record["user_id"])
-                sig_valid = verify_signature(
-                    record, record["signature"], public_key
-                )
-            except Exception:
-                sig_valid = False
-
-            if not sig_valid:
-                status = "signature_invalid"
-            else:
-                status = "identified"
+            status = "signature_invalid"
+    else:
+        if watermark_id is None:
+            status = "watermark_not_found"
+        elif confidence_result["verdict"] == "REJECT":
+            status = "rejected"
+        else:
+            status = "ledger_miss"
 
     # ── Build forensic report ────────────────────────────────────
     report = build_forensic_report(

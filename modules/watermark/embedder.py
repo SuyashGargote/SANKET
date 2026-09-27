@@ -126,6 +126,29 @@ def _compute_spread_factor(payload_len: int, total_blocks: int, blocks_y: int) -
     return sf
 
 
+def _prevent_clipping(dct_block: np.ndarray) -> np.ndarray:
+    """
+    Adjust DC coefficient (dct_block[0, 0]) to ensure IDCT pixel values remain
+    within [0.0, 255.0] without non-linear spatial clipping.
+    Because DC is mathematically orthogonal to all AC coefficients, adjusting DC
+    shifts pixel values uniformly without altering AC watermark or sync coefficients.
+    """
+    rec = cv2.idct(dct_block)
+    max_val = float(rec.max())
+    min_val = float(rec.min())
+    if max_val > 255.0 and min_val < 0.0:
+        mid = (max_val + min_val) / 2.0
+        shift = 127.5 - mid
+        dct_block[0, 0] += shift * 8.0
+    elif max_val > 255.0:
+        over = max_val - 255.0
+        dct_block[0, 0] -= over * 8.0
+    elif min_val < 0.0:
+        under = 0.0 - min_val
+        dct_block[0, 0] += under * 8.0
+    return dct_block
+
+
 # -- Main embedding function ---------------------------------------------------
 
 def embed_watermark(image_bytes: bytes, watermark_hex: str) -> bytes:
@@ -194,6 +217,7 @@ def embed_watermark(image_bytes: bytes, watermark_hex: str) -> bytes:
             for u, v in EMBED_COEFFICIENTS:
                 dct_block[u, v] = _qim_embed(dct_block[u, v], bit_val, delta)
 
+            dct_block = _prevent_clipping(dct_block)
             y_channel[r0 : r0 + BLOCK_SIZE, c0 : c0 + BLOCK_SIZE] = cv2.idct(dct_block)
 
     # -- Synchronization template embedding (ALL blocks) --
@@ -208,6 +232,7 @@ def embed_watermark(image_bytes: bytes, watermark_hex: str) -> bytes:
             sync_bit = SYNC_PATTERN[by % SYNC_PERIOD][bx % SYNC_PERIOD]
             dct_block[su, sv] = _qim_embed(dct_block[su, sv], sync_bit, SYNC_DELTA)
 
+            dct_block = _prevent_clipping(dct_block)
             y_channel[r0 : r0 + BLOCK_SIZE, c0 : c0 + BLOCK_SIZE] = cv2.idct(dct_block)
 
     # -- Remove padding, reconstruct --

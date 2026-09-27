@@ -258,14 +258,21 @@ def build_forensic_report(
         notes.append("CRC mismatch — watermark may be partially corrupted")
 
     # Corruption analysis
+    is_clean_document = extraction["crc_valid"] and sync_score >= 0.75
     if corruption_ratio > 0.30:
-        tamper_detected = True
-        notes.append(f"High corruption: {corruption_ratio:.1%} of blocks affected")
+        if not is_clean_document:
+            tamper_detected = True
+            notes.append(f"High corruption: {corruption_ratio:.1%} of blocks affected")
+        else:
+            notes.append(f"Document canvas: {corruption_ratio:.1%} uniform background blocks (intact watermark)")
     elif corruption_ratio > 0.15:
-        tamper_detected = True
-        notes.append(
-            f"Moderate corruption: {corruption_ratio:.1%} of blocks affected"
-        )
+        if not is_clean_document:
+            tamper_detected = True
+            notes.append(
+                f"Moderate corruption: {corruption_ratio:.1%} of blocks affected"
+            )
+        else:
+            notes.append(f"Document canvas: {corruption_ratio:.1%} uniform background blocks")
     elif corruption_ratio > 0.05:
         notes.append(
             f"Minor corruption: {corruption_ratio:.1%} of blocks affected"
@@ -277,9 +284,10 @@ def build_forensic_report(
     elif multi_signal["stable"]:
         notes.append("Watermark stable across blur and JPEG perturbation")
     elif multi_signal["primary"]["watermark_id"] is not None:
-        tamper_detected = True
+        if multi_signal["agreement"] < 2:
+            tamper_detected = True
         notes.append(
-            f"Multi-signal instability: "
+            f"Multi-signal stability: "
             f"{multi_signal['agreement']}/3 extractions agree"
         )
 

@@ -432,12 +432,40 @@ def verify_ledger_with_anchors() -> dict:
 
 
 def query_by_watermark(watermark_id: str) -> Optional[dict]:
-    """Look up a ledger record by watermark ID."""
+    """
+    Look up a ledger record by watermark ID.
+    Performs exact match first, followed by near-match fallback (Hamming distance <= 4 bits)
+    to recover from minor single-bit perturbations under heavy distortion.
+    """
     chain = _load_chain()
+    if not watermark_id:
+        return None
+
+    # 1. Exact match
     for block in chain:
         w_id = block.get("data", {}).get("watermark_id") if isinstance(block.get("data"), dict) else block.get("watermark_id")
         if w_id == watermark_id:
             return block
+
+    # 2. Near-match fallback (Hamming distance <= 4 bits across 128-bit watermark)
+    try:
+        wm_bytes = bytes.fromhex(watermark_id)
+        best_block = None
+        min_dist = 5  # strictly <= 4 bits
+        for block in chain:
+            w_id = block.get("data", {}).get("watermark_id") if isinstance(block.get("data"), dict) else block.get("watermark_id")
+            if not w_id or len(w_id) != len(watermark_id):
+                continue
+            b_bytes = bytes.fromhex(w_id)
+            dist = sum(bin(x ^ y).count("1") for x, y in zip(wm_bytes, b_bytes))
+            if dist < min_dist:
+                min_dist = dist
+                best_block = block
+        if best_block:
+            return best_block
+    except Exception:
+        pass
+
     return None
 
 
