@@ -8,6 +8,11 @@ import {
   XCircle,
   FileSearch,
   Fingerprint,
+  Copy,
+  Download,
+  Check,
+  Code,
+  FileCode,
 } from 'lucide-react';
 import { api } from '../../api/client';
 
@@ -17,6 +22,44 @@ export default function LeakVerifyScreen({ prefillImagePath }) {
   const [isVerifying, setIsVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState(null);
   const [error, setError] = useState(null);
+  const [proofVerifyResult, setProofVerifyResult] = useState(null);
+  const [isVerifyingProof, setIsVerifyingProof] = useState(false);
+  const [copiedProof, setCopiedProof] = useState(false);
+  const [showRawJson, setShowRawJson] = useState(false);
+
+  const handleVerifyProof = async () => {
+    const proof = verifyResult?.proof || verifyResult?.proof_bundle;
+    if (!proof) return;
+    setIsVerifyingProof(true);
+    try {
+      const res = await api.verifyProof(proof);
+      setProofVerifyResult(res);
+    } catch (err) {
+      setProofVerifyResult({ valid: false, reason: err.message || 'Verification failed.' });
+    } finally {
+      setIsVerifyingProof(false);
+    }
+  };
+
+  const handleCopyProof = () => {
+    const proof = verifyResult?.proof || verifyResult?.proof_bundle;
+    if (!proof) return;
+    navigator.clipboard.writeText(JSON.stringify(proof, null, 2));
+    setCopiedProof(true);
+    setTimeout(() => setCopiedProof(false), 2000);
+  };
+
+  const handleDownloadProof = () => {
+    const proof = verifyResult?.proof || verifyResult?.proof_bundle;
+    if (!proof) return;
+    const blob = new Blob([JSON.stringify(proof, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${verifyResult.proof_id || 'proof_bundle'}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const handleVerify = async (e) => {
     e.preventDefault();
@@ -268,6 +311,155 @@ export default function LeakVerifyScreen({ prefillImagePath }) {
                   </div>
                 </div>
               </div>
+
+              {/* Cryptographic Proof Bundle (Phase 1) */}
+              {(verifyResult.proof || verifyResult.proof_bundle) && (
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3 font-mono text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <FileCode className="w-4 h-4 text-purple-400" />
+                      <span className="font-sans font-bold text-white text-xs">
+                        Cryptographic Proof Bundle
+                      </span>
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-purple-950/80 border border-purple-800 text-purple-300">
+                        {verifyResult.proof_id || 'PRF-BUNDLE'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 font-sans">
+                      <button
+                        type="button"
+                        onClick={handleVerifyProof}
+                        disabled={isVerifyingProof}
+                        className="py-1 px-2.5 rounded bg-purple-600 hover:bg-purple-500 disabled:bg-slate-800 text-white text-[11px] font-semibold flex items-center gap-1 transition-all shadow-sm"
+                      >
+                        {isVerifyingProof ? (
+                          <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                        ) : (
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                        )}
+                        <span>Verify Proof</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowRawJson(!showRawJson)}
+                        className="py-1 px-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] flex items-center gap-1 transition-all"
+                      >
+                        <Code className="w-3.5 h-3.5" />
+                        <span>{showRawJson ? 'Hide JSON' : 'View JSON'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleCopyProof}
+                        className="py-1 px-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] flex items-center gap-1 transition-all"
+                        title="Copy Proof Bundle JSON"
+                      >
+                        {copiedProof ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copiedProof ? 'Copied' : 'Copy'}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={handleDownloadProof}
+                        className="py-1 px-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] flex items-center gap-1 transition-all"
+                        title="Download Proof Bundle JSON"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Download</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Proof Verification Result Banner */}
+                  {proofVerifyResult && (
+                    <div
+                      className={`p-2.5 rounded-lg border text-[11px] flex items-center gap-2 font-sans ${
+                        proofVerifyResult.valid
+                          ? 'bg-emerald-950/60 border-emerald-800 text-emerald-300'
+                          : 'bg-red-950/60 border-red-800 text-red-300'
+                      }`}
+                    >
+                      {proofVerifyResult.valid ? (
+                        <>
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span>
+                            <strong>Proof Cryptographically Validated:</strong> Watermark CRC, file hash consistency, decrypted output hash, hash chain linkage, periodic anchor, and all PQC multi-signatures verified.
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <XCircle className="w-4 h-4 text-red-400 shrink-0" />
+                          <span>
+                            <strong>Verification Failed:</strong> {proofVerifyResult.reason}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Structured Proof Components */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px]">
+                    <div className="p-2 rounded bg-slate-900 border border-slate-800/80 space-y-1">
+                      <span className="text-slate-400 font-sans font-semibold block text-[10px] uppercase">
+                        Ledger Chain Linkage:
+                      </span>
+                      <div>
+                        <span className="text-slate-500">Block Index: </span>
+                        <span className="text-white font-bold">
+                          #{(verifyResult.proof || verifyResult.proof_bundle)?.ledger?.block_index}
+                        </span>
+                      </div>
+                      <div className="truncate">
+                        <span className="text-slate-500">Block Hash: </span>
+                        <span className="text-blue-400">
+                          {(verifyResult.proof || verifyResult.proof_bundle)?.ledger?.block_hash}
+                        </span>
+                      </div>
+                      <div className="truncate">
+                        <span className="text-slate-500">Anchor Checkpoint: </span>
+                        <span className="text-purple-400">
+                          {(verifyResult.proof || verifyResult.proof_bundle)?.ledger?.anchor_hash}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-2 rounded bg-slate-900 border border-slate-800/80 space-y-1">
+                      <span className="text-slate-400 font-sans font-semibold block text-[10px] uppercase">
+                        Post-Quantum Signatures (Dilithium):
+                      </span>
+                      <div className="truncate">
+                        <span className="text-slate-500">Recipient (@{verifyResult.user}): </span>
+                        <span className="text-emerald-400">
+                          {(verifyResult.proof || verifyResult.proof_bundle)?.signatures?.recipient ? 'VALID SIGNATURE' : 'MISSING'}
+                        </span>
+                      </div>
+                      <div className="truncate">
+                        <span className="text-slate-500">Gateway Authority: </span>
+                        <span className="text-emerald-400">
+                          {(verifyResult.proof || verifyResult.proof_bundle)?.signatures?.gateway ? 'VALID SIGNATURE' : 'MISSING'}
+                        </span>
+                      </div>
+                      <div className="truncate">
+                        <span className="text-slate-500">Peer Quorum: </span>
+                        <span className="text-cyan-400">
+                          {((verifyResult.proof || verifyResult.proof_bundle)?.signatures?.peers?.length || 0)} Peer Node(s) Verified
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Raw JSON viewer */}
+                  {showRawJson && (
+                    <div className="mt-2 p-3 rounded-lg bg-slate-900 border border-slate-800 text-[10px] overflow-x-auto max-h-60">
+                      <pre className="text-slate-300">
+                        {JSON.stringify(verifyResult.proof || verifyResult.proof_bundle, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Notes */}
               {verifyResult.notes && verifyResult.notes.length > 0 && (

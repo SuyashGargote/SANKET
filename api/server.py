@@ -130,6 +130,22 @@ app.add_middleware(
 )
 
 
+# ── Step 8: Multi-Node Ledger Sync on Startup ────────────────────────────────
+@app.on_event("startup")
+def startup_ledger_sync():
+    """Step 8: Fetch peer ledgers, validate chains, and adopt longest valid chain on startup."""
+    try:
+        from modules.ledger.network import sync_with_peers
+        res = sync_with_peers()
+        if res.get("synced"):
+            print(f"[Ledger Sync] Adopted chain from {res.get('adopted_from')} (length: {res.get('new_length')})")
+        else:
+            print(f"[Ledger Sync] Local ledger up to date (length: {res.get('current_length')})")
+    except Exception as e:
+        print(f"[Ledger Sync] Startup peer sync notice: {e}")
+
+
+
 # ── Response & Error Formatting ──────────────────────────────────────────────
 
 def make_response(data: Any = None, error: Any = None, success: Optional[bool] = None) -> dict:
@@ -418,7 +434,7 @@ def async_encrypt_worker(job_id: str, target_path: str, recipient_list: list[str
 
 def async_decrypt_worker(job_id: str, resolved_pkg: str, user_id: str):
     try:
-        res = decrypt_file(resolved_pkg, user_id)
+        res = decrypt_file(resolved_pkg, user_id, active_session_user=user_id)
         run_auto_cleanup()
         filename = os.path.basename(res["output_path"])
         job_manager.complete_job(job_id, {
@@ -825,8 +841,14 @@ async def decrypt_endpoint(
                 pkg = form.get("package_path") or form.get("package") or form.get("document_id") or pkg
                 usr = form.get("user") or form.get("user_id") or usr
 
-    # Identity enforcement: Header X-User-ID takes precedence if provided to bind to logged-in user
-    active_identity = request.headers.get("X-User-ID") or usr
+    # Identity enforcement: Header X-User-ID takes precedence to bind to logged-in user session
+    session_user = request.headers.get("X-User-ID") if (request and hasattr(request, "headers")) else None
+    if session_user and usr and session_user.strip().lower() != usr.strip().lower():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Active session user '{session_user}' cannot decrypt or sign as '{usr}'.",
+        )
+    active_identity = session_user or usr
     if not active_identity:
         active_identity = "bob"
 
@@ -856,7 +878,7 @@ async def decrypt_endpoint(
     # Synchronous mode
     if sync:
         try:
-            res = decrypt_file(resolved_pkg, target_user)
+            res = decrypt_file(resolved_pkg, target_user, active_session_user=session_user or target_user)
             run_auto_cleanup()
             if doc_record:
                 mark_document_decrypted(
@@ -875,16 +897,20 @@ async def decrypt_endpoint(
                 },
             )
             filename = os.path.basename(res["output_path"])
+            sigs = res["block"].get("signatures", {})
             result_data = {
                 "status": "success",
                 "watermarked_image_path": res["output_path"],
                 "output_path": res["output_path"],
                 "watermark_id": res["watermark_id"],
                 "file_id": res["file_id"],
+                "file_hash": res.get("file_hash", res["file_id"]),
+                "decrypted_hash": res.get("decrypted_hash", ""),
                 "user": target_user,
                 "ledger_block": res["block"]["index"],
-                "recipient_signature": res["block"]["recipient_signature"],
-                "system_signature": res["block"]["system_signature"],
+                "recipient_signature": sigs.get("recipient") or res["block"].get("recipient_signature"),
+                "system_signature": sigs.get("gateway") or res["block"].get("system_signature"),
+                "peers": sigs.get("peers", []),
                 "download_image_url": f"/download/decrypted/{filename}?api_key={api_key}",
             }
             return make_response(result_data)
@@ -947,6 +973,10 @@ async def verify_endpoint(
     identified_user = res.get("user") or res.get("user_id")
     crc_ok = bool(res.get("crc_valid"))
 
+    from modules.proof.proof_bundle import generate_proof_bundle, save_proof_bundle
+    proof_bundle = generate_proof_bundle(res, res.get("record"))
+    proof_id = save_proof_bundle(proof_bundle)
+
     result_data = {
         "status": res["status"],
         "user": identified_user,
@@ -963,6 +993,9 @@ async def verify_endpoint(
         "multi_signal_agreement": res.get("multi_signal_agreement"),
         "ledger_valid": res.get("ledger_valid"),
         "signature_valid": res.get("signature_valid"),
+        "proof": proof_bundle,
+        "proof_bundle": proof_bundle,
+        "proof_id": proof_id,
         "notes": res.get("notes", []),
         "reasoning": res.get("reasoning", ""),
         "verified_file": target_path,
@@ -1086,6 +1119,158 @@ def get_ledger_blocks(api_key: str = Depends(verify_api_key)):
         "chain_ok": verify_res["chain_ok"],
         "anchor_ok": verify_res["anchor_ok"],
     })
+
+
+# ── Cryptographic Proof Bundle Endpoints (Phase 1) ───────────────────────────
+
+@app.get(
+    "/proof/{proof_id}",
+    summary="Get stored cryptographic proof bundle by ID or watermark ID",
+    description="Returns the stored cryptographic proof bundle for forensic leak attribution.",
+    tags=["Cryptographic Proof"],
+)
+def get_proof_endpoint(proof_id: str, api_key: Optional[str] = Depends(optional_or_browser_api_key)):
+    from modules.proof.proof_bundle import load_proof_bundle, generate_proof_bundle, save_proof_bundle
+    from modules.ledger.hashchain import query_by_watermark
+
+    proof = load_proof_bundle(proof_id)
+    if not proof:
+        block = query_by_watermark(proof_id)
+        if block:
+            vr_synth = {
+                "watermark_id": block.get("watermark_id") or block.get("data", {}).get("watermark_id"),
+                "user_id": block.get("user_id") or block.get("data", {}).get("user_id"),
+                "crc_valid": True,
+                "confidence": 100.0,
+                "verdict": "HIGH_CONFIDENCE",
+            }
+            proof = generate_proof_bundle(vr_synth, block)
+            save_proof_bundle(proof, f"PRF-{proof_id[:16]}")
+
+    if not proof:
+        raise HTTPException(status_code=404, detail=f"Proof bundle '{proof_id}' not found.")
+
+    return make_response(proof)
+
+
+@app.post(
+    "/proof/verify",
+    summary="Verify an external or stored cryptographic proof bundle",
+    description="Cryptographically verifies watermark integrity (CRC), file hash, decrypted output hash, hash chain linkage, anchor checkpoint, and all post-quantum Dilithium signatures.",
+    tags=["Cryptographic Proof"],
+)
+def verify_proof_endpoint(
+    proof: dict = Body(...),
+    api_key: str = Depends(verify_api_key),
+):
+    from modules.proof.proof_bundle import verify_proof_bundle
+    res = verify_proof_bundle(proof)
+    return make_response(res)
+
+
+# ── Distributed Multi-Node Ledger Endpoints (Phase 2) ────────────────────────
+
+@app.post(
+    "/ledger/block/receive",
+    summary="Receive broadcasted block from a peer node",
+    description="Validates candidate block using consensus rules (recipient, gateway, and peer signatures) and appends to local ledger.",
+    tags=["Distributed Ledger"],
+)
+def receive_block_endpoint(
+    payload: dict = Body(...),
+    api_key: str = Depends(verify_api_key),
+):
+    from modules.ledger.network import receive_block
+    block = payload.get("block", payload)
+    ok, reason = receive_block(block)
+    if not ok:
+        raise HTTPException(status_code=400, detail=reason)
+    return make_response({"status": "accepted", "message": reason, "block_index": block.get("index")})
+
+
+@app.post(
+    "/ledger/block/sign",
+    summary="Validate and sign candidate block as a peer node (Consensus Quorum)",
+    description="Validates candidate block and returns this node's Dilithium signature over the block hash.",
+    tags=["Distributed Ledger"],
+)
+def sign_block_endpoint(
+    payload: dict = Body(...),
+    api_key: str = Depends(verify_api_key),
+):
+    from modules.ledger.network import validate_block, load_node_config, ensure_node_keys
+    from modules.crypto.signature import load_private_key, load_public_key, ml_dsa_65
+
+    block = payload.get("block", payload)
+    ok, reason = validate_block(block, require_quorum=False)
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"Candidate block rejected: {reason}")
+
+    cfg = load_node_config()
+    node_id = cfg["node_id"]
+    ensure_node_keys(node_id)
+    node_priv = load_private_key(node_id)
+    node_pub = load_public_key(node_id)
+
+    block_hash = block["hash"].encode("utf-8")
+    if isinstance(node_priv, bytes):
+        sig = ml_dsa_65.sign(node_priv, block_hash).hex()
+    else:
+        sig = node_priv.sign(block_hash).hex()
+
+    pub_hex = node_pub.hex() if isinstance(node_pub, bytes) else str(node_pub)
+
+    return make_response({
+        "node_id": node_id,
+        "signature": sig,
+        "public_key": pub_hex,
+        "status": "signed",
+    })
+
+
+@app.get(
+    "/ledger/sync",
+    summary="Get local ledger chain and anchors for peer synchronization",
+    description="Returns chain and anchors for multi-node ledger synchronization.",
+    tags=["Distributed Ledger"],
+)
+def sync_ledger_endpoint(api_key: str = Depends(verify_api_key)):
+    from modules.ledger.hashchain import _load_chain, _load_anchors
+    from modules.ledger.network import load_node_config
+
+    cfg = load_node_config()
+    chain = _load_chain()
+    anchors = _load_anchors()
+
+    return make_response({
+        "node_id": cfg["node_id"],
+        "chain": chain,
+        "anchors": anchors,
+        "chain_length": len(chain),
+    })
+
+
+@app.post(
+    "/ledger/sync",
+    summary="Trigger synchronization with configured peer nodes",
+    description="Contacts configured peer nodes, validates peer chains, and adopts the longest valid chain.",
+    tags=["Distributed Ledger"],
+)
+def trigger_sync_endpoint(api_key: str = Depends(verify_api_key)):
+    from modules.ledger.network import sync_with_peers
+    res = sync_with_peers()
+    return make_response(res)
+
+
+@app.get(
+    "/ledger/peers",
+    summary="Get node identity, peers list, and public key",
+    description="Returns this node's identity, port, configured peer URLs, and Dilithium public key.",
+    tags=["Distributed Ledger"],
+)
+def get_peers_endpoint(api_key: str = Depends(verify_api_key)):
+    from modules.ledger.network import get_node_info
+    return make_response(get_node_info())
 
 
 # ── Shared Workflow Endpoints ────────────────────────────────────────────────

@@ -45,8 +45,11 @@ API_KEYS              = {k.strip() for k in _env_keys.split(",")} if _env_keys e
 MAX_KEPT_FILES        = int(os.getenv("MAX_KEPT_FILES", "50"))
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "120"))
 
+PROOFS_DIR      = os.path.join(DATA_DIR, "proofs")
+NODE_CONFIG_FILE = os.path.join(DATA_DIR, "node_config.json")
+
 # ── Ensure directories exist ─────────────────────────────────
-for d in (KEYS_DIR, ENCRYPTED_DIR, DECRYPTED_DIR, LEDGER_DIR, REPORTS_DIR, UPLOADS_DIR, LOGS_DIR):
+for d in (KEYS_DIR, ENCRYPTED_DIR, DECRYPTED_DIR, LEDGER_DIR, REPORTS_DIR, UPLOADS_DIR, LOGS_DIR, PROOFS_DIR):
     os.makedirs(d, exist_ok=True)
 
 

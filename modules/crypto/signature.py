@@ -100,11 +100,86 @@ def load_public_key(user_id: str):
     raise FileNotFoundError(f"No public key for user '{user_id}'. Run key generation first.")
 
 
+import hashlib
+
+# ── Decryption Event Signing (Phase 3 Enforcement) ───────────
+
+DECRYPTION_EVENT_FIELDS = ("watermark_id", "user_id", "timestamp", "file_hash", "decrypted_hash")
+
+
+def _canonical_decryption_event(payload: dict) -> bytes:
+    """
+    Deterministic serialization of the decryption event fields that MUST be signed.
+    Covers: watermark_id, user_id, timestamp, file_hash, decrypted_hash.
+    """
+    for field in DECRYPTION_EVENT_FIELDS:
+        val = payload.get(field)
+        if val is None and isinstance(payload.get("data"), dict):
+            val = payload["data"].get(field)
+        if val is None:
+            raise ValueError(f"Decryption event payload missing required field: '{field}'")
+
+    signed_fields = {
+        field: payload.get(field) if payload.get(field) is not None else payload["data"].get(field)
+        for field in DECRYPTION_EVENT_FIELDS
+    }
+    return json.dumps(signed_fields, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def sign_decryption_event(user_private_key, payload: dict) -> str:
+    """
+    Sign a decryption event payload using the user's post-quantum private key (ML-DSA-65 Dilithium).
+    Payload MUST include: watermark_id, user_id, timestamp, file_hash, decrypted_hash.
+    Enforces user-side non-repudiation.
+    """
+    message = _canonical_decryption_event(payload)
+    if isinstance(user_private_key, bytes):
+        sig = ml_dsa_65.sign(user_private_key, message)
+        return sig.hex()
+    elif hasattr(user_private_key, "sign"):
+        # Ed25519 fallback
+        return user_private_key.sign(message).hex()
+    else:
+        raise TypeError(f"Unsupported private key type: {type(user_private_key)}")
+
+
+def verify_decryption_event(payload: dict, signature_hex: str, public_key) -> bool:
+    """Verify Dilithium signature over the decryption event payload."""
+    try:
+        message = _canonical_decryption_event(payload)
+    except Exception:
+        return False
+    return _verify_raw_signature(message, signature_hex, public_key)
+
+
+def verify_key_uniqueness() -> tuple[bool, str]:
+    """
+    Enforce that each user has their OWN unique private/public key.
+    Checks that no key is reused across distinct users.
+    """
+    if not os.path.exists(KEYS_DIR):
+        return True, "No keys directory."
+    seen_keys: dict[str, str] = {}
+    for user_id in os.listdir(KEYS_DIR):
+        user_dir = os.path.join(KEYS_DIR, user_id)
+        if not os.path.isdir(user_dir):
+            continue
+        pub_path = os.path.join(user_dir, "dilithium_public.bin")
+        if os.path.exists(pub_path):
+            with open(pub_path, "rb") as f:
+                key_bytes = f.read()
+                key_hash = hashlib.sha256(key_bytes).hexdigest()
+                if key_hash in seen_keys:
+                    return False, f"Key reuse detected between user '{seen_keys[key_hash]}' and '{user_id}'"
+                seen_keys[key_hash] = user_id
+    return True, f"Key uniqueness verified across {len(seen_keys)} users."
+
+
 # ── Signing & Verification ───────────────────────────────────
 
 def _canonical_record(record: dict) -> bytes:
     """
-    Deterministic serialization of the record fields that MUST be signed.
+    Deterministic serialization of legacy record fields.
     Covers: watermark_id, user_id, file_id, timestamp, nonce.
     """
     signed_fields = {
@@ -117,22 +192,8 @@ def _canonical_record(record: dict) -> bytes:
     return json.dumps(signed_fields, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def sign_record(record: dict, private_key) -> str:
-    """Sign a decryption record using Dilithium (ML-DSA-65). Returns hex-encoded signature."""
-    message = _canonical_record(record)
-    if isinstance(private_key, bytes):
-        sig = ml_dsa_65.sign(private_key, message)
-        return sig.hex()
-    elif hasattr(private_key, "sign"):
-        # Ed25519 fallback
-        return private_key.sign(message).hex()
-    else:
-        raise TypeError(f"Unsupported private key type: {type(private_key)}")
-
-
-def verify_signature(record: dict, signature_hex: str, public_key) -> bool:
-    """Verify signature over the record using Dilithium (ML-DSA-65). Returns True if valid."""
-    message = _canonical_record(record)
+def _verify_raw_signature(message: bytes, signature_hex: str, public_key) -> bool:
+    """Verify raw bytes signature with Dilithium or fallback public key."""
     try:
         sig_bytes = bytes.fromhex(signature_hex)
     except Exception:
@@ -143,7 +204,6 @@ def verify_signature(record: dict, signature_hex: str, public_key) -> bool:
             ml_dsa_65.verify(public_key, message, sig_bytes)
             return True
         except Exception:
-            # Maybe public_key was Ed25519 raw bytes?
             try:
                 ed_pub = Ed25519PublicKey.from_public_bytes(public_key)
                 ed_pub.verify(sig_bytes, message)
@@ -162,5 +222,51 @@ def verify_signature(record: dict, signature_hex: str, public_key) -> bool:
             return True
         except Exception:
             return False
+
+    return False
+
+
+def sign_record(record: dict, private_key) -> str:
+    """Sign a decryption record using Dilithium (ML-DSA-65). Returns hex-encoded signature."""
+    # If record has full decryption event fields, prefer signing as decryption event
+    has_event_fields = all(k in record for k in DECRYPTION_EVENT_FIELDS)
+    if has_event_fields:
+        return sign_decryption_event(private_key, record)
+
+    message = _canonical_record(record)
+    if isinstance(private_key, bytes):
+        sig = ml_dsa_65.sign(private_key, message)
+        return sig.hex()
+    elif hasattr(private_key, "sign"):
+        # Ed25519 fallback
+        return private_key.sign(message).hex()
+    else:
+        raise TypeError(f"Unsupported private key type: {type(private_key)}")
+
+
+def verify_signature(record: dict, signature_hex: str, public_key) -> bool:
+    """
+    Verify signature over the record using Dilithium (ML-DSA-65).
+    Checks both full decryption event canonical payload and legacy record format.
+    """
+    # 1. Try decryption event payload verification
+    if verify_decryption_event(record, signature_hex, public_key):
+        return True
+
+    # 2. Try legacy record format verification
+    try:
+        message = _canonical_record(record)
+        if _verify_raw_signature(message, signature_hex, public_key):
+            return True
+    except Exception:
+        pass
+
+    # 3. If record has 'hash' field (block hash), check if signature covers block hash
+    if "hash" in record:
+        try:
+            if _verify_raw_signature(record["hash"].encode("utf-8"), signature_hex, public_key):
+                return True
+        except Exception:
+            pass
 
     return False

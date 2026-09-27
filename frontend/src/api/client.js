@@ -241,6 +241,57 @@ export const api = {
     return data.data || data;
   },
 
+  async getProof(proofId) {
+    const res = await fetch(`${getBaseUrl()}/proof/${encodeURIComponent(proofId)}`, {
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to fetch proof (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
+  async verifyProof(proof) {
+    const res = await fetch(`${getBaseUrl()}/proof/verify`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(proof),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to verify proof (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
+  async getPeers() {
+    const res = await fetch(`${getBaseUrl()}/ledger/peers`, {
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to fetch peers (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
+  async syncLedger() {
+    const res = await fetch(`${getBaseUrl()}/ledger/sync`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || `Failed to sync ledger (${res.status})`);
+    }
+    const data = await res.json();
+    return data.data || data;
+  },
+
   // ── 7. System Status ──────────────────────────────────────────────────────
   async getStatus() {
     const res = await fetch(`${getBaseUrl()}/status`, {

@@ -36,9 +36,12 @@ data/uploads/
 data/logs/
 data/documents/
 data/users/
+data/proofs/
+data/nodes/
 data/*.png
 *.db
 *.db-wal
 *.db-shm
 data/*.db*
+
 

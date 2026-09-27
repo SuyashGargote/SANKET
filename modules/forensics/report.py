@@ -296,7 +296,14 @@ def generate_report(
             "nonce": vr["record"].get("nonce"),
         }
 
-    # ── Step 7: Save JSON ────────────────────────────────────────
+    # ── Step 7: Cryptographic Proof Bundle (Phase 1) ─────────────
+    from modules.proof.proof_bundle import generate_proof_bundle, save_proof_bundle
+    proof_bundle = generate_proof_bundle(vr, vr.get("record"))
+    proof_id = save_proof_bundle(proof_bundle, report_id)
+    report["proof"] = proof_bundle
+    report["proof_id"] = proof_id
+
+    # ── Step 8: Save JSON ────────────────────────────────────────
     json_filename = f"{report_id}.json"
     json_path = os.path.join(output_dir, json_filename)
     with open(json_path, "w", encoding="utf-8") as f:
