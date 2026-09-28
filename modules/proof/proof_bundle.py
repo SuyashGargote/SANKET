@@ -135,10 +135,33 @@ def generate_proof_bundle(verification_result: dict, ledger_block: Optional[dict
     confidence = float(verification_result.get("confidence", 0.0))
     verdict = str(verification_result.get("verdict", "HIGH_CONFIDENCE"))
 
+    # Provenance Timestamps
+    encrypted_at = (
+        verification_result.get("encrypted_at")
+        or block_data.get("encrypted_at")
+        or ledger_block.get("encrypted_at")
+        or verification_result.get("timestamps", {}).get("encrypted_at")
+        or ""
+    )
+    decrypted_at = (
+        verification_result.get("decrypted_at")
+        or block_data.get("decrypted_at")
+        or ledger_block.get("decrypted_at")
+        or verification_result.get("timestamps", {}).get("decrypted_at")
+        or timestamp
+    )
+    timestamps = verification_result.get("timestamps") or {
+        "encrypted_at": encrypted_at or None,
+        "decrypted_at": decrypted_at or None,
+    }
+
     bundle = {
         "watermark_id":   watermark_id,
         "user_id":        user_id,
         "timestamp":      timestamp,
+        "decrypted_at":   decrypted_at,
+        "encrypted_at":   encrypted_at,
+        "timestamps":     timestamps,
         "file_hash":      file_hash,
         "decrypted_hash": decrypted_hash,
         "ledger": {

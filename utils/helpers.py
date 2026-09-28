@@ -5,6 +5,8 @@ Utility helpers — file validation, watermark ID generation, common functions.
 import hashlib
 import os
 import struct
+from datetime import datetime, timezone
+from typing import Optional
 
 from config import SUPPORTED_EXTENSIONS, WATERMARK_HEX_LENGTH
 
@@ -33,14 +35,108 @@ def generate_nonce() -> str:
     return os.urandom(16).hex()
 
 
-def generate_watermark_id(user_id: str, file_id: str, timestamp: str, nonce: str) -> str:
+def _parse_to_epoch(ts: str | float | int | None) -> int:
+    """Parse ISO-8601 string or numeric timestamp to integer epoch seconds."""
+    if not ts:
+        return int(datetime.now(timezone.utc).timestamp())
+    if isinstance(ts, (int, float)):
+        return int(ts)
+    try:
+        clean_ts = str(ts).strip().replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean_ts)
+        return int(dt.timestamp())
+    except Exception:
+        try:
+            return int(float(ts))
+        except Exception:
+            return int(datetime.now(timezone.utc).timestamp())
+
+
+def generate_watermark_id(
+    user_id: str,
+    file_id: str,
+    timestamp: str,
+    nonce: str,
+    encrypted_at: Optional[str] = None,
+) -> str:
     """
-    Watermark ID = SHA-256(user_id + file_id + timestamp + nonce), truncated.
-    The nonce ensures uniqueness even for repeated decryptions by the same user.
+    Generate a 32-hex (128-bit) watermark ID that directly embeds provenance timestamps:
+      - Bytes 0..3 (8 hex chars): Unix timestamp of when document was encrypted (encrypted_at)
+      - Bytes 4..7 (8 hex chars): Unix timestamp of when document was decrypted & watermarked (timestamp)
+      - Bytes 8..15 (16 hex chars): Cryptographic entropy binding user_id, file_id, timestamps, and nonce.
+    
+    This enables direct extraction of both encryption and decryption timestamps from the recovered
+    watermark bits even before querying the distributed ledger.
     """
-    payload = f"{user_id}{file_id}{timestamp}{nonce}"
-    full_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    return full_hash[:WATERMARK_HEX_LENGTH]
+    dec_epoch = _parse_to_epoch(timestamp)
+    enc_epoch = _parse_to_epoch(encrypted_at) if encrypted_at else dec_epoch
+
+    enc_hex = struct.pack(">I", enc_epoch & 0xFFFFFFFF).hex()
+    dec_hex = struct.pack(">I", dec_epoch & 0xFFFFFFFF).hex()
+
+    entropy_payload = f"{user_id}:{file_id}:{timestamp}:{nonce}:{encrypted_at or ''}"
+    entropy_hex = hashlib.sha256(entropy_payload.encode("utf-8")).hexdigest()[:16]
+
+    wm_id = f"{enc_hex}{dec_hex}{entropy_hex}"
+    return wm_id[:WATERMARK_HEX_LENGTH]
+
+
+def decode_watermark_timestamps(watermark_id: str) -> dict:
+    """
+    Extract embedded encryption and decryption timestamps from a 32-hex watermark ID.
+    Returns:
+        {
+            "encrypted_at": str | None,
+            "decrypted_at": str | None,
+            "has_embedded_timestamps": bool,
+        }
+    """
+    if not watermark_id or not isinstance(watermark_id, str) or len(watermark_id) != 32:
+        return {"encrypted_at": None, "decrypted_at": None, "has_embedded_timestamps": False}
+
+    try:
+        enc_epoch = struct.unpack(">I", bytes.fromhex(watermark_id[:8]))[0]
+        dec_epoch = struct.unpack(">I", bytes.fromhex(watermark_id[8:16]))[0]
+
+        # Sanity check: valid epoch timestamps between 2020 and 2100 (1500000000 to 4200000000)
+        if 1500000000 <= enc_epoch <= 4200000000 and 1500000000 <= dec_epoch <= 4200000000:
+            dt_enc = datetime.fromtimestamp(enc_epoch, timezone.utc).isoformat()
+            dt_dec = datetime.fromtimestamp(dec_epoch, timezone.utc).isoformat()
+            elapsed_sec = max(0, dec_epoch - enc_epoch)
+            return {
+                "encrypted_at": dt_enc,
+                "decrypted_at": dt_dec,
+                "elapsed_seconds": elapsed_sec,
+                "elapsed_formatted": format_elapsed_time(elapsed_sec),
+                "has_embedded_timestamps": True,
+            }
+    except Exception:
+        pass
+
+    return {
+        "encrypted_at": None,
+        "decrypted_at": None,
+        "elapsed_seconds": None,
+        "elapsed_formatted": "N/A",
+        "has_embedded_timestamps": False,
+    }
+
+
+def format_elapsed_time(seconds: float | None) -> str:
+    """Format elapsed seconds into human-readable string (e.g. '1h 24m 10s' or '45.2s')."""
+    if seconds is None:
+        return "N/A"
+    seconds = max(0.0, float(seconds))
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, sec = divmod(int(seconds), 60)
+    if minutes < 60:
+        return f"{minutes}m {sec}s"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h {minutes}m {sec}s"
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h {minutes}m"
 
 
 def crc16(data: bytes) -> int:

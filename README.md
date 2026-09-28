@@ -74,7 +74,7 @@ flowchart LR
     subgraph S2 ["Stage 2: Decrypt & Watermark"]
         direction TB
         B1["Bob (Recipient)"] --> B2["Kyber Decapsulation<br/>(In-Memory AES Key)"]
-        B2 --> B3["DCT-QIM Watermark<br/>(Recipient + Nonce + CRC)"]
+        B2 --> B3["Dual-Timestamp DCT-QIM Watermark<br/>(Enc Time + Dec Time + Nonce + CRC)"]
         B3 --> B4["ML-DSA-65 (Dilithium)<br/>(Bob Signs Decryption)"]
     end
 
@@ -87,13 +87,13 @@ flowchart LR
 
     subgraph S4 ["Stage 4: Attribute & Prove"]
         direction TB
-        D1["Leaked Image Scan"] --> D2["DCT-QIM Extraction<br/>(24 Votes/Bit + Sync)"]
-        D2 --> D3["Ledger Correlation<br/>(Attributed to Bob)"]
-        D3 --> D4["Proof Bundle (JSON)<br/>(Court-Grade Evidence)"]
+        D1["Leaked Image Scan"] --> D2["DCT-QIM Extraction<br/>(Dual Timestamps + 24 Votes/Bit)"]
+        D2 --> D3["Ledger & Provenance Correlation<br/>(Attributed to Bob + Transit Latency Δt)"]
+        D3 --> D4["Proof Bundle & Temporal Timeline<br/>(Court-Grade Evidence)"]
     end
 
-    S1 ==>|"Encrypted Package"| S2
-    S2 ==>|"Signed Event"| S3
+    S1 ==>|"Encrypted Package + Enc Timestamp"| S2
+    S2 ==>|"Signed Event + Dec Timestamp"| S3
     S3 -.->|"Immutable Record"| S4
     D1 -.->|"Forensic Investigation"| S4
 ```
@@ -122,9 +122,9 @@ sequenceDiagram
     Alice->>Gate: POST /send {file, recipients: ["bob", "charlie"]}
     Gate->>Gate: Generate AES-256-GCM K_doc + IV
     Gate->>Gate: Wrap K_doc per recipient via ML-KEM-768 Encapsulation
-    Gate->>DB: Write data/encrypted/{pkg_id}/ (payload.enc + metadata.json)
-    Gate->>DB: INSERT INTO documents & document_recipients (status='pending')
-    Gate-->>Alice: HTTP 200 OK: Distribution Receipt {document_id, recipients}
+    Gate->>DB: Write data/encrypted/{pkg_id}/ (payload.enc + metadata.json with encrypted_at)
+    Gate->>DB: INSERT INTO documents & document_recipients (status='pending', created_at)
+    Gate-->>Alice: HTTP 200 OK: Distribution Receipt {document_id, recipients, encrypted_at}
 
     Note over Bob,DB: Phase 2: Session-Bound In-Memory Decryption & Signing
     Bob->>Gate: GET /inbox (Header: X-User-ID: "bob")
@@ -132,15 +132,15 @@ sequenceDiagram
     Gate-->>Bob: Inbox List (e.g. document_id: "doc_01", status: "pending")
     Bob->>Gate: POST /decrypt {package_id} (Header: X-User-ID: "bob")
     Gate->>Gate: RBAC Gatekeeper: Validate 'bob' is authorized & matches session
-    Gate->>DB: Read metadata.json & payload.enc
+    Gate->>DB: Read metadata.json (retrieve encrypted_at) & payload.enc
     Gate->>Gate: In-RAM ML-KEM-768 Decapsulation -> In-RAM AES-256-GCM Decrypt
-    Gate->>Gate: 2D DCT-QIM Watermarking: Embed Bob ID + Timestamp + Nonce + CRC
+    Gate->>Gate: Dual-Timestamp 2D DCT-QIM Watermarking: Embed Enc Epoch + Dec Epoch + Nonce + CRC
     Gate->>Gate: Orthogonal DC Anti-Clipping compensation on boundary blocks
     Bob->>Gate: Client-Side Dilithium Signing: Sign canonical decryption payload
     Gate->>Gate: Gateway Dilithium Signing: Sign block hash
 
     Note over Gate,Peer: Phase 3: P2P Multi-Node Consensus Quorum
-    Gate->>Peer: POST /ledger/block/sign {candidate_block}
+    Gate->>Peer: POST /ledger/block/sign {candidate_block with encrypted_at & decrypted_at}
     Peer->>Peer: Validate Hash Continuity, Bob's Signature, & Gateway Signature
     Peer->>Peer: Node B Dilithium Signs Block Hash
     Peer-->>Gate: Return Peer Signature {node_id: "node_B", signature: "..."}
@@ -148,36 +148,38 @@ sequenceDiagram
     Gate->>DB: Commit Block to Node A (data/ledger/ledger.json)
     Gate->>Peer: POST /ledger/block/receive {finalized_block}
     Peer->>Peer: Commit Block to Node B (data/nodes/node_B/ledger/ledger.json)
-    Gate->>DB: UPDATE document_recipients SET status='decrypted', watermark_id=...
+    Gate->>DB: UPDATE document_recipients SET status='decrypted', watermark_id=..., decrypted_at=...
     Gate->>DB: Write watermarked image to data/decrypted/file_bob_xxxx.png
-    Gate-->>Bob: HTTP 200 OK: Decrypted Watermarked Document Display / Download
+    Gate-->>Bob: HTTP 200 OK: Decrypted Watermarked Document Display / Download (with Timestamps)
 
     Note over Forensic,DB: Phase 4: Forensic Leak Attribution & Court Verification
     Forensic->>Gate: POST /verify {leaked_image_file}
     Gate->>Gate: Synchronize Image: Angular search [-5.5°, +5.5°] on Coeff (4,2)
     Gate->>Gate: Multi-Signal DCT-QIM Extraction (24 votes/bit majority voting)
     Gate->>Gate: Validate CRC-16 Checksum (Zero bit-flips)
+    Gate->>Gate: Standalone Timestamp Extraction: Read Enc Epoch + Dec Epoch from Watermark bits
     Gate->>DB: Query Distributed Ledger for extracted Watermark ID
-    DB-->>Gate: Match Block #5: Decrypted by @bob on 2026-09-27
-    Gate->>DB: Assemble Cryptographic Proof Bundle (data/proofs/PRF-xxxx.json)
-    Gate-->>Forensic: Attribution Result: Attributed to @bob + Proof Bundle JSON
+    DB-->>Gate: Match Block #5: Decrypted by @bob (Encrypted: t_enc | Decrypted: t_dec)
+    Gate->>Gate: Calculate Elapsed Transit Duration Δt = t_dec - t_enc
+    Gate->>DB: Assemble Cryptographic Proof Bundle (data/proofs/PRF-xxxx.json with timestamps)
+    Gate-->>Forensic: Attribution Result: Attributed to @bob + Provenance Timeline + Proof Bundle JSON
     Forensic->>Gate: POST /proof/verify {proof_id: "PRF-xxxx"}
     Gate->>Gate: Execute 6 Mathematical Verifications (V1 through V6)
-    Gate-->>Forensic: HTTP 200 OK: Court-Grade Certificate (HIGH_CONFIDENCE: 100% Bob)
+    Gate-->>Forensic: HTTP 200 OK: Court-Grade Certificate (HIGH_CONFIDENCE: 100% Bob, Timestamps Validated)
 ```
 
 ### Operational User Journey:
 1. **Sender Experience (`SendScreen.jsx` / `main.py send`)**:
    - The user selects a document file (PNG, JPG, BMP) and chooses recipients from the registered directory (`@bob`, `@charlie`).
-   - The system computes the file integrity hash, executes a single AES-256-GCM encryption, encapsulates the document key for each recipient with their respective NIST FIPS 203 **ML-KEM-768** public key, records metadata in SQLite, and provides an immediate distribution receipt.
+   - The system computes the file integrity hash, executes a single AES-256-GCM encryption, encapsulates the document key for each recipient with their respective NIST FIPS 203 **ML-KEM-768** public key, records metadata (including `encrypted_at`) in SQLite, and provides an immediate distribution receipt.
 2. **Recipient Experience (`InboxScreen.jsx` & `DecryptScreen.jsx` / `main.py decrypt`)**:
    - The recipient inspects their inbox with real-time access badges.
    - When triggering decryption, the active session identity (`X-User-ID`) is cryptographically enforced. Decapsulation and decryption occur **strictly in volatile memory**.
-   - Plaintext is dynamically injected with an invisible, robust 2D DCT-QIM watermark carrying the recipient's identity, timestamp, and nonce.
+   - Plaintext is dynamically injected with an invisible, robust 2D DCT-QIM watermark carrying the dual timestamps (encryption epoch + decryption epoch), recipient's identity, and nonce.
    - The user's NIST FIPS 204 **ML-DSA-65 (Dilithium)** private key signs the canonical event payload before the file is rendered or downloaded, creating irrevocable non-repudiation.
 3. **Forensic Examiner Experience (`LeakVerifyScreen.jsx` / `main.py verify` & `report`)**:
    - An investigator uploads any recovered digital copy (even if screenshotted, cropped, rotated, re-compressed with JPEG, or noisy).
-   - The platform auto-corrects angular skew, extracts watermark bits across multiple signal perturbations, checks the CRC-16 polynomial, correlates the watermark with the immutable ledger, compiles a court-grade **Cryptographic Proof Bundle**, and verifies all 6 mathematical gates in real time.
+   - The platform auto-corrects angular skew, extracts watermark bits across multiple signal perturbations, checks the CRC-16 polynomial, extracts both embedded timestamps completely offline, correlates the watermark with the immutable ledger, compiles a court-grade **Cryptographic Proof Bundle**, and displays the complete **Provenance Timeline & Transit Latency ($\Delta t$)** in real time.
 
 ---
 
@@ -261,6 +263,7 @@ flowchart TD
       "wrapped_key": "1290fe34..."
     }
   },
+  "encrypted_at": "2026-09-28T14:15:22.901Z",
   "created_at": "2026-09-28T14:15:22.901Z"
 }
 ```
@@ -288,7 +291,7 @@ flowchart TD
     subgraph WatermarkEngine ["3. In-Memory 2D DCT-QIM Watermarking & Anti-Clipping"]
         ZERO_DISK --> YCBCR["Convert RGB to YCbCr (Extract Y Luminance Channel)"]
         YCBCR --> BLOCKS["Partition Luminance into 8x8 Spatial Blocks & Apply 2D DCT"]
-        BLOCKS --> PAYLOAD_GEN["Generate Unique 144-Bit Watermark Payload:<br/>128-bit Watermark ID (UUID4) || 16-bit CRC-16 Checksum"]
+        BLOCKS --> PAYLOAD_GEN["Generate Dual-Timestamp 144-Bit Watermark Payload:<br/>[4B Encrypt Epoch] || [4B Decrypt Epoch] || [8B Entropy] || [16-bit CRC-16 Checksum]"]
         PAYLOAD_GEN --> QIM["Adaptive Quantization Index Modulation (QIM):<br/>Embed bits in mid-frequencies (2,2), (3,1), (1,3), (2,3)<br/>Step size delta in [38.0, 62.0] scaled to block variance"]
         QIM --> SYNC_TEMP["Inject Periodic Synchronization Pattern:<br/>Coefficient (4,2) with fixed delta_sync = 80.0"]
         SYNC_TEMP --> ANTI_CLIP["Orthogonal DC Anti-Clipping Compensation:<br/>Shift DC coefficient (0,0) by +/- delta*8.0 on boundary blocks<br/>(Completely prevents 0/255 clipping without altering AC watermark)"]
@@ -297,7 +300,7 @@ flowchart TD
 
     subgraph SigningConsensus ["4. User-Side Dilithium Signing & Multi-Node Ledger Commit"]
         IDCT --> HASH_WM["Compute Output Digest:<br/>H_decrypted = SHA-256(F_wm)"]
-        HASH_WM --> EVENT["Assemble Canonical Decryption Event Record:<br/>{watermark_id, user_id, timestamp, file_hash, decrypted_hash}"]
+        HASH_WM --> EVENT["Assemble Canonical Decryption Event Record:<br/>{watermark_id, user_id, timestamp, encrypted_at, decrypted_at, file_hash, decrypted_hash}"]
         EVENT --> BOB_SIGN["Enforce User-Side Post-Quantum Signature:<br/>sigma_recipient = ML-DSA-65.Sign(SK_bob, Canonical_Event)"]
         BOB_SIGN --> P2P["P2P Multi-Node Consensus Quorum:<br/>• System Authority Signs Block Hash<br/>• Peer Node B Validates & Signs Block Hash"]
         P2P --> LEDGER_COMMIT[("Commit Block to Independent Node Ledgers<br/>• Node A: data/ledger/ledger.json<br/>• Node B: data/nodes/node_B/ledger/ledger.json")]
@@ -319,7 +322,12 @@ flowchart TD
    - $F_{\text{raw}} = \mathbf{AES\text{-}256\text{-}GCM\text{-}Decrypt}(K_{\text{doc}}, \text{IV}, C_{\text{payload}}, T_{\text{gcm}}, \text{AAD}=H_{\text{file}})$.
    - $\text{SHA-256}(F_{\text{raw}})$ is verified against $H_{\text{file}}$ in `metadata.json`.
    - **Crucial Invariant**: $F_{\text{raw}}$ is never flushed to filesystem, temp files, or swap storage.
-4. **2D DCT-QIM Watermarking & Anti-Clipping**:
+4. **Dual-Timestamp 2D DCT-QIM Watermarking & Anti-Clipping**:
+   - **144-Bit Watermark Binary Payload**: Embedded into mid-frequencies with self-describing temporal provenance:
+     - `Bytes 0..3` (32-bit unsigned int): **Encryption Epoch** ($t_{\text{enc}}$) recovered from package metadata.
+     - `Bytes 4..7` (32-bit unsigned int): **Decryption Epoch** ($t_{\text{dec}}$) recorded at moment of plaintext recovery.
+     - `Bytes 8..15` (64-bit hash): Cryptographic entropy and recipient binding hash.
+     - `Bytes 16..17` (16-bit CRC): **CRC-16-CCITT** polynomial checksum ensuring zero undetected bit-flips.
    - Plaintext pixels are converted to YCbCr; the luminance $Y$ channel is divided into $8 \times 8$ blocks.
    - Watermark bits are embedded into mid-frequency coefficients `(2,2), (3,1), (1,3), (2,3)` using adaptive quantization index modulation ($\Delta \in [38.0, 62.0]$).
    - Synchronization pattern is embedded into coefficient `(4,2)` ($\Delta_{\text{sync}} = 80.0$).
@@ -494,11 +502,12 @@ flowchart TD
         CRC_CHECK -->|"Checksum Failed"| REJECT_TAMPER["INTEGRITY BREACH DETECTED<br/>Image payload damaged, forged, or missing"]
     end
 
-    subgraph LedgerCorrelation ["3. Multi-Node Distributed Ledger Correlation"]
+    subgraph LedgerCorrelation ["3. Temporal Provenance Decoding & Distributed Ledger Correlation"]
         CRC_CHECK -->|"Checksum Passed"| WM_ID["Validated 128-bit Watermark ID"]
-        WM_ID --> QUERY["Query Distributed Ledger Blocks<br/>(Exact Match or Hamming Distance <= 4 bits)"]
-        QUERY --> BLOCK_MATCH["Block Found: Block #5<br/>• Recipient: @bob<br/>• Timestamp: 2026-09-27T15:33:50Z<br/>• Block Hash: cb104928..."]
-        BLOCK_MATCH --> BUNDLE_GEN["Compile Cryptographic Proof Bundle (PRF-xxxx.json)<br/>Binds forensic evidence + ledger block + PQC signatures"]
+        WM_ID --> OFFLINE_TS["Standalone Dual-Timestamp Extraction:<br/>• Bytes 0..3: Enc Epoch (t_enc)<br/>• Bytes 4..7: Dec Epoch (t_dec)<br/>• Transit Latency: Δt = t_dec - t_enc"]
+        OFFLINE_TS --> QUERY["Query Distributed Ledger Blocks<br/>(Exact Match or Hamming Distance <= 4 bits)"]
+        QUERY --> BLOCK_MATCH["Block Found: Block #5<br/>• Recipient: @bob<br/>• Encrypted: 2026-09-28T14:15:22Z<br/>• Decrypted: 2026-09-28T14:28:45Z<br/>• Block Hash: cb104928..."]
+        BLOCK_MATCH --> BUNDLE_GEN["Compile Cryptographic Proof Bundle (PRF-xxxx.json)<br/>Binds forensic evidence + timestamps + ledger block + PQC signatures"]
     end
 
     subgraph SixGateVerification ["4. Cryptographic Proof Engine: 6-Gate Strict Verification"]
@@ -547,10 +556,17 @@ Every generated Proof Bundle must satisfy six sequential mathematical assertions
   "confidence_score": 100.0,
   "verdict": "VERIFIED_HIGH_CONFIDENCE",
   "forensic_watermark": {
-    "watermark_id": "f0402966c4a79cc2ca98e4c67014b474",
+     "watermark_id": "f0402966c4a79cc2ca98e4c67014b474",
     "crc_valid": true,
     "majority_votes_per_bit": 24,
     "angular_skew_corrected_deg": 1.5
+  },
+  "timestamps": {
+    "encrypted_at": "2026-09-28T14:15:22.901Z",
+    "decrypted_at": "2026-09-28T14:28:45.312Z",
+    "elapsed_seconds": 802.4,
+    "elapsed_formatted": "13m 22s",
+    "embedded_in_watermark": true
   },
   "blockchain_evidence": {
     "block_index": 5,
@@ -570,6 +586,12 @@ Every generated Proof Bundle must satisfy six sequential mathematical assertions
   }
 }
 ```
+
+### 7.1 Temporal Provenance & Transit Latency Verification
+In addition to cryptographically identifying the leaking party, SANKET's dual-timestamp watermark architecture records both the moment of encryption ($t_{\text{enc}}$) and recipient decryption ($t_{\text{dec}}$):
+- **Embedded Directly in Image Bits**: Bytes 0..7 of the watermark ID pack two 32-bit unsigned Unix timestamps ($t_{\text{enc}}$ and $t_{\text{dec}}$). An investigator with only the recovered image bits can extract these timestamps completely offline without network access.
+- **Corroborated by Distributed Ledger**: The timestamps are cross-referenced with the immutable block record and SQLite WAL database to prevent timestamp forgery.
+- **Transit Duration Auditing**: Total elapsed transit time $\Delta t = t_{\text{dec}} - t_{\text{enc}}$ is automatically calculated and displayed in forensic reports, CLI output, and the investigator dashboard.
 
 ---
 

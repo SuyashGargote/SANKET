@@ -254,6 +254,22 @@ export default function DecryptScreen({
                         {decryptResult.file_id}
                       </span>
                     </div>
+                    {(decryptResult.encrypted_at || decryptResult.decrypted_at) && (
+                      <div className="pt-2 border-t border-slate-800/80 space-y-1.5">
+                        {decryptResult.encrypted_at && (
+                          <div>
+                            <span className="text-slate-500 text-[10px] uppercase font-sans tracking-wide block">Encrypted At:</span>
+                            <span className="text-blue-300 text-[11px]">{decryptResult.encrypted_at}</span>
+                          </div>
+                        )}
+                        {decryptResult.decrypted_at && (
+                          <div>
+                            <span className="text-slate-500 text-[10px] uppercase font-sans tracking-wide block">Decrypted At:</span>
+                            <span className="text-emerald-300 text-[11px]">{decryptResult.decrypted_at}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 

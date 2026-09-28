@@ -8,6 +8,7 @@ with AES-256-GCM under that wrapping key.
 
 import json
 import os
+from datetime import datetime, timezone
 
 from pqcrypto.kem import ml_kem_768
 
@@ -249,11 +250,14 @@ def encrypt_file(filepath: str, recipient_ids: list[str]) -> str:
     with open(enc_path, "wb") as f:
         f.write(ciphertext)
 
+    encrypted_at = datetime.now(timezone.utc).isoformat()
     metadata = {
         "original_filename": os.path.basename(filepath),
         "nonce": nonce.hex(),
         "wrapped_keys": wrapped_keys,
         "algorithm": "AES-256-GCM + ML-KEM-768",
+        "encrypted_at": encrypted_at,
+        "created_at": encrypted_at,
     }
     with open(meta_path, "w") as f:
         json.dump(metadata, f, indent=2)

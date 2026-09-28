@@ -239,6 +239,9 @@ def build_forensic_report(
     ledger_valid: bool = False,
     user_id: str | None = None,
     signature_valid: bool | None = None,
+    timestamps: dict | None = None,
+    encrypted_at: str | None = None,
+    decrypted_at: str | None = None,
 ) -> dict:
     """
     Assemble the full forensic tamper analysis report.
@@ -303,6 +306,11 @@ def build_forensic_report(
     if not ledger_valid:
         notes.append("Ledger integrity check failed or not verified")
 
+    # Provenance timeline
+    if encrypted_at and decrypted_at:
+        elapsed = timestamps.get("elapsed_formatted", "N/A") if timestamps else "N/A"
+        notes.append(f"Provenance timeline: Encrypted {encrypted_at} | Decrypted {decrypted_at} ({elapsed} in transit)")
+
     return {
         "user": user_id,
         "watermark_id": extraction["watermark_id"],
@@ -319,5 +327,8 @@ def build_forensic_report(
         "ledger_valid": ledger_valid,
         "signature_valid": signature_valid,
         "record": ledger_record,
+        "timestamps": timestamps or {},
+        "encrypted_at": encrypted_at,
+        "decrypted_at": decrypted_at,
         "notes": notes,
     }

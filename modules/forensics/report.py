@@ -277,6 +277,11 @@ def generate_report(
         # ── Ledger ───────────────────────────────────────────────
         "ledger_valid": vr.get("ledger_valid", False),
         "signature_valid": vr.get("signature_valid"),
+
+        # ── Provenance Timestamps ────────────────────────────────
+        "timestamps": vr.get("timestamps", {}),
+        "encrypted_at": vr.get("encrypted_at"),
+        "decrypted_at": vr.get("decrypted_at"),
     }
 
     # Add anchor-based ledger verification
@@ -290,10 +295,13 @@ def generate_report(
 
     # Include ledger record details if available
     if vr.get("record"):
+        rec = vr["record"]
         report["ledger_record"] = {
-            "index": vr["record"].get("index"),
-            "timestamp": vr["record"].get("timestamp"),
-            "nonce": vr["record"].get("nonce"),
+            "index": rec.get("index"),
+            "timestamp": rec.get("timestamp"),
+            "encrypted_at": rec.get("encrypted_at"),
+            "decrypted_at": rec.get("decrypted_at"),
+            "nonce": rec.get("nonce"),
         }
 
     # ── Step 7: Cryptographic Proof Bundle (Phase 1) ─────────────
@@ -380,6 +388,20 @@ def print_report(report: dict) -> None:
         rec = report["ledger_record"]
         print(f"    Block #      : {rec.get('index', 'N/A')}")
         print(f"    Timestamp    : {rec.get('timestamp', 'N/A')}")
+
+    # -- Provenance Timeline -------------------------------------------
+    ts = report.get("timestamps", {})
+    enc_ts = report.get("encrypted_at") or ts.get("encrypted_at") or (report.get("ledger_record") or {}).get("encrypted_at")
+    dec_ts = report.get("decrypted_at") or ts.get("decrypted_at") or (report.get("ledger_record") or {}).get("decrypted_at") or (report.get("ledger_record") or {}).get("timestamp")
+    elapsed_str = ts.get("elapsed_formatted")
+    if enc_ts or dec_ts:
+        print(f"\n  -- PROVENANCE TIMELINE {'-' * (W - 24)}")
+        if enc_ts:
+            print(f"    Encrypted At : {enc_ts}")
+        if dec_ts:
+            print(f"    Decrypted At : {dec_ts}")
+        if elapsed_str and elapsed_str != "N/A":
+            print(f"    Time Elapsed : {elapsed_str}")
 
     # -- Notes ---------------------------------------------------------
     if report.get("notes"):

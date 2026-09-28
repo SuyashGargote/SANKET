@@ -95,7 +95,7 @@ def _compute_block_hash(block: dict) -> str:
     # Canonical hash for Phase 2 block format
     if "data" in block and isinstance(block["data"], dict):
         data_copy = dict(block["data"])
-        for k in ("watermark_id", "user_id", "timestamp", "file_hash", "decrypted_hash", "file_id", "nonce"):
+        for k in ("watermark_id", "user_id", "timestamp", "file_hash", "decrypted_hash", "file_id", "nonce", "encrypted_at", "decrypted_at"):
             if k in block:
                 data_copy[k] = block[k]
 
@@ -259,6 +259,8 @@ def append_record(record: dict) -> dict:
         "watermark_id":   record["watermark_id"],
         "user_id":        record["user_id"],
         "timestamp":      record["timestamp"],
+        "decrypted_at":   record.get("decrypted_at", record["timestamp"]),
+        "encrypted_at":   record.get("encrypted_at", ""),
         "file_hash":      file_hash,
         "decrypted_hash": decrypted_hash,
         "file_id":        record.get("file_id", file_hash),
@@ -280,6 +282,8 @@ def append_record(record: dict) -> dict:
         "user_id":                      record["user_id"],
         "file_id":                      record.get("file_id", file_hash),
         "timestamp":                    record["timestamp"],
+        "decrypted_at":                 record.get("decrypted_at", record["timestamp"]),
+        "encrypted_at":                 record.get("encrypted_at", ""),
         "nonce":                        record.get("nonce", ""),
         "recipient_signature":          recipient_signature,
         "system_signature":             system_signature,

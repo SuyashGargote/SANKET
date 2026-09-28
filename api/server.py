@@ -443,6 +443,9 @@ def async_decrypt_worker(job_id: str, resolved_pkg: str, user_id: str):
             "output_path": res["output_path"],
             "watermark_id": res["watermark_id"],
             "file_id": res["file_id"],
+            "encrypted_at": res.get("encrypted_at"),
+            "decrypted_at": res.get("decrypted_at"),
+            "timestamp": res.get("decrypted_at") or res.get("timestamp"),
             "user": user_id,
             "ledger_block": res["block"]["index"],
             "download_image_url": f"/download/decrypted/{filename}",
@@ -906,6 +909,9 @@ async def decrypt_endpoint(
                 "file_id": res["file_id"],
                 "file_hash": res.get("file_hash", res["file_id"]),
                 "decrypted_hash": res.get("decrypted_hash", ""),
+                "encrypted_at": res.get("encrypted_at"),
+                "decrypted_at": res.get("decrypted_at"),
+                "timestamp": res.get("decrypted_at") or res.get("timestamp"),
                 "user": target_user,
                 "ledger_block": res["block"]["index"],
                 "recipient_signature": sigs.get("recipient") or res["block"].get("recipient_signature"),
@@ -977,6 +983,10 @@ async def verify_endpoint(
     proof_bundle = generate_proof_bundle(res, res.get("record"))
     proof_id = save_proof_bundle(proof_bundle)
 
+    timestamps = res.get("timestamps") or {}
+    enc_at = timestamps.get("encrypted_at") or (res.get("record") and res["record"].get("encrypted_at"))
+    dec_at = timestamps.get("decrypted_at") or (res.get("record") and (res["record"].get("decrypted_at") or res["record"].get("timestamp")))
+
     result_data = {
         "status": res["status"],
         "user": identified_user,
@@ -987,6 +997,11 @@ async def verify_endpoint(
         "verdict": res.get("verdict"),
         "tamper_detected": res.get("tamper_detected"),
         "watermark_id": res.get("watermark_id"),
+        "timestamps": timestamps,
+        "encrypted_at": enc_at,
+        "decrypted_at": dec_at,
+        "elapsed_seconds": timestamps.get("elapsed_seconds"),
+        "elapsed_formatted": timestamps.get("elapsed_formatted"),
         "vote_ratio": res.get("vote_ratio"),
         "sync_score": res.get("sync_score"),
         "corruption": res.get("corruption"),

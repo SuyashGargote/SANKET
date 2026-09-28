@@ -119,6 +119,10 @@ def cmd_decrypt(args):
     print(f"  ✓ Decrypted and watermarked → {result['output_path']}")
     print(f"    Watermark ID : {result['watermark_id']}")
     print(f"    File ID      : {result['file_id'][:16]}...")
+    if result.get("encrypted_at"):
+        print(f"    Encrypted At : {result['encrypted_at']}")
+    if result.get("decrypted_at"):
+        print(f"    Decrypted At : {result['decrypted_at']}")
     print(f"    Ledger block : #{result['block']['index']}")
     print(f"    Recipient Sig: {result['block']['recipient_signature'][:24]}...")
     print(f"    System Sig   : {result['block']['system_signature'][:24]}...")
@@ -167,8 +171,16 @@ def cmd_verify(args):
         print(f"\n  🔍 LEAK SOURCE IDENTIFIED")
         print(f"    User ID      : {result['user']}")
         print(f"    Watermark    : {result['watermark_id']}")
-        if result.get("record"):
-            print(f"    Timestamp    : {result['record']['timestamp']}")
+        ts = result.get("timestamps") or {}
+        enc_time = ts.get("encrypted_at") or (result.get("record") and result["record"].get("encrypted_at"))
+        dec_time = ts.get("decrypted_at") or (result.get("record") and (result["record"].get("decrypted_at") or result["record"].get("timestamp")))
+        if enc_time:
+            print(f"    Encrypted At : {enc_time}")
+        if dec_time:
+            print(f"    Decrypted At : {dec_time}")
+        if ts.get("elapsed_formatted"):
+            print(f"    Transit Time : {ts['elapsed_formatted']}")
+        if result.get("record") and result["record"].get("nonce"):
             print(f"    Nonce        : {result['record']['nonce']}")
     elif result["status"] == "rejected":
         print(f"\n  ✗  REJECTED — confidence too low for reliable attribution.")

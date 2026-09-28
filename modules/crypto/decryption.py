@@ -16,6 +16,7 @@ Pipeline:
 """
 
 import hashlib
+import json
 import os
 from datetime import datetime, timezone
 from typing import Optional
@@ -38,13 +39,14 @@ def decrypt_file(pkg_dir: str, user_id: str, active_session_user: Optional[str] 
 
     1. Enforces session binding if active session is provided.
     2. Decrypts the encrypted package using recipient's Kyber private key.
-    3. Generates a unique watermark (with nonce and recipient identity).
-    4. Embeds watermark BEFORE any bytes leave this function.
-    5. Computes SHA-256 hash of both encrypted input (file_hash) and watermarked output (decrypted_hash).
-    6. Recipient signs payload containing: watermark_id, user_id, timestamp, file_hash, decrypted_hash
+    3. Retrieves original encryption timestamp (encrypted_at) from package metadata.
+    4. Generates a unique watermark directly embedding both encryption & decryption timestamps.
+    5. Embeds watermark BEFORE any bytes leave this function.
+    6. Computes SHA-256 hash of both encrypted input (file_hash) and watermarked output (decrypted_hash).
+    7. Recipient signs payload containing: watermark_id, user_id, timestamp, file_hash, decrypted_hash
        using their own post-quantum Dilithium private key.
-    7. Appends record to distributed ledger (with multi-signature validation).
-    8. Saves the watermarked output.
+    8. Appends record to distributed ledger (with multi-signature validation).
+    9. Saves the watermarked output.
 
     Args:
         pkg_dir: Path to the encrypted package directory.
@@ -58,6 +60,9 @@ def decrypt_file(pkg_dir: str, user_id: str, active_session_user: Optional[str] 
             file_id: str       — hash of original encrypted package
             file_hash: str     — SHA-256 hash of encrypted payload
             decrypted_hash: str — SHA-256 hash of watermarked output
+            encrypted_at: str  — timestamp when file was encrypted
+            decrypted_at: str  — timestamp when file was decrypted
+            timestamp: str     — decryption timestamp
             record: dict       — the signed ledger record
             block: dict        — the committed ledger block
     """
@@ -73,25 +78,57 @@ def decrypt_file(pkg_dir: str, user_id: str, active_session_user: Optional[str] 
     # ── Step 2: Validate file type ──
     validate_file_type(original_filename)
 
-    # ── Step 3: Generate unique watermark ID & file hash ──
+    # ── Step 3: Extract encryption timestamp from package metadata or database ──
+    meta_path = os.path.join(pkg_dir, "metadata.json")
+    encrypted_at = None
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+                encrypted_at = meta.get("encrypted_at") or meta.get("created_at")
+        except Exception:
+            pass
+
+    if not encrypted_at:
+        try:
+            from modules.distribution.registry import get_document
+            doc = get_document(pkg_dir)
+            if doc and doc.get("created_at"):
+                encrypted_at = doc.get("created_at")
+        except Exception:
+            pass
+
+    if not encrypted_at:
+        payload_enc = os.path.join(pkg_dir, "payload.enc")
+        if os.path.exists(payload_enc):
+            mtime = os.path.getmtime(payload_enc)
+            encrypted_at = datetime.fromtimestamp(mtime, timezone.utc).isoformat()
+        else:
+            encrypted_at = datetime.now(timezone.utc).isoformat()
+
+    decrypted_at = datetime.now(timezone.utc).isoformat()
+    timestamp = decrypted_at
+
+    # ── Step 4: Generate unique watermark ID directly embedding timestamps & file hash ──
     file_id = generate_file_id(os.path.join(pkg_dir, "payload.enc"))
     file_hash = file_id
-    timestamp = datetime.now(timezone.utc).isoformat()
     nonce = generate_nonce()
-    watermark_id = generate_watermark_id(user_id, file_id, timestamp, nonce)
+    watermark_id = generate_watermark_id(user_id, file_id, timestamp, nonce, encrypted_at=encrypted_at)
 
-    # ── Step 4: Embed watermark (raw_bytes are consumed here) ──
+    # ── Step 5: Embed watermark (raw_bytes are consumed here) ──
     watermarked_bytes = embed_watermark(raw_bytes, watermark_id)
     del raw_bytes
 
-    # ── Step 5: Compute decrypted output hash ──
+    # ── Step 6: Compute decrypted output hash ──
     decrypted_hash = hashlib.sha256(watermarked_bytes).hexdigest()
 
-    # ── Step 6: Sign the decryption record with recipient's own Dilithium key ──
+    # ── Step 7: Sign the decryption record with recipient's own Dilithium key ──
     record = {
         "watermark_id":   watermark_id,
         "user_id":        user_id,
         "timestamp":      timestamp,
+        "decrypted_at":   decrypted_at,
+        "encrypted_at":   encrypted_at,
         "file_hash":      file_hash,
         "decrypted_hash": decrypted_hash,
         "file_id":        file_id,
@@ -102,11 +139,11 @@ def decrypt_file(pkg_dir: str, user_id: str, active_session_user: Optional[str] 
     record["signature"] = signature
     record["recipient_signature"] = signature
 
-    # ── Step 7: Append to ledger (distributed multi-signature consensus) ──
+    # ── Step 8: Append to ledger (distributed multi-signature consensus) ──
     from modules.ledger.hashchain import append_record
     block = append_record(record)
 
-    # ── Step 8: Save watermarked output ──
+    # ── Step 9: Save watermarked output ──
     out_filename = f"{os.path.splitext(original_filename)[0]}_{user_id}_{watermark_id[:8]}.png"
     output_path = os.path.join(DECRYPTED_DIR, out_filename)
     with open(output_path, "wb") as f:
@@ -118,6 +155,9 @@ def decrypt_file(pkg_dir: str, user_id: str, active_session_user: Optional[str] 
         "file_id":        file_id,
         "file_hash":      file_hash,
         "decrypted_hash": decrypted_hash,
+        "encrypted_at":   encrypted_at,
+        "decrypted_at":   decrypted_at,
+        "timestamp":      timestamp,
         "record":         record,
         "block":          block,
     }

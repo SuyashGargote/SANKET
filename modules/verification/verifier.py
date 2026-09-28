@@ -11,6 +11,8 @@ Pipeline:
   6. Build and return forensic tamper analysis report.
 """
 
+from datetime import datetime, timezone
+
 from modules.crypto.signature import load_public_key, verify_signature
 from modules.ledger.hashchain import query_by_watermark, verify_chain
 from modules.verification.confidence import compute_confidence
@@ -20,7 +22,7 @@ from modules.verification.forensic import (
     compute_sync_score,
     multi_signal_extraction,
 )
-from utils.helpers import validate_file_type
+from utils.helpers import decode_watermark_timestamps, format_elapsed_time, validate_file_type
 
 
 def verify_leaked_file(filepath: str) -> dict:
@@ -127,6 +129,54 @@ def verify_leaked_file(filepath: str) -> dict:
         else:
             status = "ledger_miss"
 
+    # ── Step 6: Provenance & Timestamps Analysis (Encrypted & Decrypted) ──
+    embedded_ts = decode_watermark_timestamps(watermark_id) if watermark_id else {}
+    encrypted_at = embedded_ts.get("encrypted_at")
+    decrypted_at = embedded_ts.get("decrypted_at")
+
+    if record is not None:
+        rec_data = record.get("data") if isinstance(record.get("data"), dict) else record
+        # High precision timestamps from ledger
+        decrypted_at = rec_data.get("decrypted_at") or rec_data.get("timestamp") or decrypted_at
+        encrypted_at = rec_data.get("encrypted_at") or encrypted_at
+
+        # If encrypted_at not in block, look up documents registry in SQLite
+        if not encrypted_at:
+            file_ref = rec_data.get("file_hash") or rec_data.get("file_id")
+            if file_ref:
+                try:
+                    from modules.database.db import get_db_connection
+                    conn = get_db_connection()
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT created_at FROM documents WHERE encrypted_package_path LIKE ? OR document_id LIKE ? LIMIT 1",
+                        (f"%{file_ref[:12]}%", f"%{file_ref[:12]}%"),
+                    )
+                    row = cur.fetchone()
+                    if row and row["created_at"]:
+                        encrypted_at = row["created_at"]
+                    conn.close()
+                except Exception:
+                    pass
+
+    # Compute elapsed time between encryption and decryption
+    elapsed_seconds = None
+    if encrypted_at and decrypted_at:
+        try:
+            dt_enc = datetime.fromisoformat(str(encrypted_at).replace("Z", "+00:00"))
+            dt_dec = datetime.fromisoformat(str(decrypted_at).replace("Z", "+00:00"))
+            elapsed_seconds = max(0.0, (dt_dec - dt_enc).total_seconds())
+        except Exception:
+            pass
+
+    timestamps_summary = {
+        "encrypted_at": encrypted_at,
+        "decrypted_at": decrypted_at,
+        "elapsed_seconds": round(elapsed_seconds, 2) if elapsed_seconds is not None else None,
+        "elapsed_formatted": format_elapsed_time(elapsed_seconds),
+        "embedded_in_watermark": bool(embedded_ts.get("has_embedded_timestamps")),
+    }
+
     # ── Build forensic report ────────────────────────────────────
     report = build_forensic_report(
         extraction=primary,
@@ -138,11 +188,17 @@ def verify_leaked_file(filepath: str) -> dict:
         ledger_valid=ledger_valid,
         user_id=user_id,
         signature_valid=sig_valid,
+        timestamps=timestamps_summary,
+        encrypted_at=encrypted_at,
+        decrypted_at=decrypted_at,
     )
 
     # Backward-compatible fields
     report["status"] = status
     report["user_id"] = user_id
     report["ledger_message"] = ledger_msg
+    report["timestamps"] = timestamps_summary
+    report["encrypted_at"] = encrypted_at
+    report["decrypted_at"] = decrypted_at
 
     return report

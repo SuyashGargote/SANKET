@@ -13,6 +13,10 @@ import {
   Check,
   Code,
   FileCode,
+  Clock,
+  Lock,
+  Unlock,
+  ArrowRight,
 } from 'lucide-react';
 import { api } from '../../api/client';
 
@@ -311,6 +315,89 @@ export default function LeakVerifyScreen({ prefillImagePath }) {
                   </div>
                 </div>
               </div>
+
+              {/* Provenance & Encryption/Decryption Timestamps */}
+              {(verifyResult.timestamps || verifyResult.encrypted_at || verifyResult.decrypted_at || (verifyResult.proof || verifyResult.proof_bundle)?.timestamps) && (
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3 font-mono text-xs">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-cyan-400" />
+                      <span className="font-sans font-bold text-white text-xs">
+                        Cryptographic Provenance & Dual Timestamps
+                      </span>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-800 text-cyan-300 font-sans">
+                      {verifyResult.timestamps?.embedded_in_watermark
+                        ? 'DCT-QIM Watermark Recovered'
+                        : 'Cryptographically Verified'}
+                    </span>
+                  </div>
+
+                  {/* Visual Timeline Flow */}
+                  <div className="grid grid-cols-1 md:grid-cols-7 gap-2 items-center text-[11px] pt-1 font-sans">
+                    {/* Encryption Timestamp */}
+                    <div className="md:col-span-3 p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-1">
+                      <div className="flex items-center gap-1.5 text-blue-400 font-semibold text-xs">
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Encrypted (Sender Stage)</span>
+                      </div>
+                      <div className="font-mono text-slate-200 font-medium text-xs break-all">
+                        {verifyResult.timestamps?.encrypted_at ||
+                          verifyResult.encrypted_at ||
+                          (verifyResult.proof || verifyResult.proof_bundle)?.timestamps?.encrypted_at ||
+                          'Recorded at Package Creation'}
+                      </div>
+                      <span className="text-slate-500 text-[10px] block">
+                        AES-256-GCM + Kyber-768 ML-KEM wrapped
+                      </span>
+                    </div>
+
+                    {/* Latency / Arrow */}
+                    <div className="md:col-span-1 flex flex-col items-center justify-center py-1">
+                      <span className="text-[10px] text-slate-500 font-mono text-center mb-0.5">
+                        In Transit
+                      </span>
+                      <div className="flex items-center gap-1 text-slate-400">
+                        <ArrowRight className="w-4 h-4 text-slate-500 hidden md:block" />
+                        <span className="text-[11px] font-mono font-bold text-cyan-400 bg-cyan-950/40 px-1.5 py-0.5 rounded border border-cyan-800/60">
+                          {verifyResult.timestamps?.elapsed_formatted ||
+                            verifyResult.elapsed_formatted ||
+                            'Verified'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Decryption Timestamp */}
+                    <div className="md:col-span-3 p-3 rounded-lg bg-slate-900 border border-slate-800 space-y-1">
+                      <div className="flex items-center gap-1.5 text-emerald-400 font-semibold text-xs">
+                        <Unlock className="w-3.5 h-3.5" />
+                        <span>Decrypted & Watermarked (Recipient Stage)</span>
+                      </div>
+                      <div className="font-mono text-slate-200 font-medium text-xs break-all">
+                        {verifyResult.timestamps?.decrypted_at ||
+                          verifyResult.decrypted_at ||
+                          verifyResult.record?.timestamp ||
+                          (verifyResult.proof || verifyResult.proof_bundle)?.timestamps?.decrypted_at ||
+                          'Recorded in Ledger Block'}
+                      </div>
+                      <span className="text-slate-500 text-[10px] block">
+                        DCT-QIM watermark bound + Dilithium signed
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="text-[10px] text-slate-400 pt-1 font-sans border-t border-slate-800/60 flex items-center justify-between">
+                    <span>
+                      ℹ Both epochs are encoded directly into the 128-bit watermark payload and signed in the immutable hashchain.
+                    </span>
+                    {verifyResult.timestamps?.elapsed_seconds !== undefined && (
+                      <span className="font-mono text-slate-400">
+                        Total delta: {verifyResult.timestamps.elapsed_seconds}s
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Cryptographic Proof Bundle (Phase 1) */}
               {(verifyResult.proof || verifyResult.proof_bundle) && (
