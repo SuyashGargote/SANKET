@@ -75,6 +75,72 @@ flowchart LR
 
 ## 3. Step-by-Step Architecture Flow Diagrams
 
+### 3.0 End-to-End User Interaction Flow & Sequence
+
+The user experience in SANKET coordinates five distinct roles across the network: **Alice (Sender/Creator)**, **Bob (Recipient/Decrypter)**, the **API Gateway (Node A :8000)**, the **Peer Validator Node (Node B :8001)**, and the **Forensic Investigator / Court Examiner**.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Alice as Alice (Sender)
+    actor Bob as Bob (Recipient)
+    participant Gate as API Gateway (Node A :8000)
+    participant Peer as Peer Node (Node B :8001)
+    participant DB as SQLite WAL DB & Storage
+    actor Forensic as Forensic Investigator
+
+    Note over Alice,DB: Phase 1: Document Distribution & Key Wrapping
+    Alice->>Gate: POST /auth/login {user_id: "alice"}
+    Gate-->>Alice: Active Session Established (X-User-ID: "alice")
+    Alice->>Gate: POST /send {file, recipients: ["bob", "charlie"]}
+    Gate->>Gate: Generate AES-256-GCM K_doc + IV
+    Gate->>Gate: Wrap K_doc per recipient via ML-KEM-768 Encapsulation
+    Gate->>DB: Write data/encrypted/{pkg_id}/ (payload.enc + metadata.json)
+    Gate->>DB: INSERT INTO documents & document_recipients (status='pending')
+    Gate-->>Alice: HTTP 200 OK: Distribution Receipt {document_id, recipients}
+
+    Note over Bob,DB: Phase 2: Session-Bound In-Memory Decryption & Signing
+    Bob->>Gate: GET /inbox (Header: X-User-ID: "bob")
+    Gate->>DB: Query pending documents where recipient_id = 'bob'
+    Gate-->>Bob: Inbox List (e.g. document_id: "doc_01", status: "pending")
+    Bob->>Gate: POST /decrypt {package_id} (Header: X-User-ID: "bob")
+    Gate->>Gate: RBAC Gatekeeper: Validate 'bob' is authorized & matches session
+    Gate->>DB: Read metadata.json & payload.enc
+    Gate->>Gate: In-RAM ML-KEM-768 Decapsulation -> In-RAM AES-256-GCM Decrypt
+    Gate->>Gate: 2D DCT-QIM Watermarking: Embed Bob ID + Timestamp + Nonce + CRC
+    Gate->>Gate: Orthogonal DC Anti-Clipping compensation on boundary blocks
+    Bob->>Gate: Client-Side Dilithium Signing: Sign canonical decryption payload
+    Gate->>Gate: Gateway Dilithium Signing: Sign block hash
+
+    Note over Gate,Peer: Phase 3: P2P Multi-Node Consensus Quorum
+    Gate->>Peer: POST /ledger/block/sign {candidate_block}
+    Peer->>Peer: Validate Hash Continuity, Bob's Signature, & Gateway Signature
+    Peer->>Peer: Node B Dilithium Signs Block Hash
+    Peer-->>Gate: Return Peer Signature {node_id: "node_B", signature: "..."}
+    Gate->>Gate: Verify Quorum Met (Recipient + Gateway + >=1 Peer)
+    Gate->>DB: Commit Block to Node A (data/ledger/ledger.json)
+    Gate->>Peer: POST /ledger/block/receive {finalized_block}
+    Peer->>Peer: Commit Block to Node B (data/nodes/node_B/ledger/ledger.json)
+    Gate->>DB: UPDATE document_recipients SET status='decrypted', watermark_id=...
+    Gate->>DB: Write watermarked image to data/decrypted/file_bob_xxxx.png
+    Gate-->>Bob: HTTP 200 OK: Decrypted Watermarked Document Display / Download
+
+    Note over Forensic,DB: Phase 4: Forensic Leak Attribution & Court Verification
+    Forensic->>Gate: POST /verify {leaked_image_file}
+    Gate->>Gate: Synchronize Image: Angular search [-5.5°, +5.5°] on Coeff (4,2)
+    Gate->>Gate: Multi-Signal DCT-QIM Extraction (24 votes/bit majority voting)
+    Gate->>Gate: Validate CRC-16 Checksum (Zero bit-flips)
+    Gate->>DB: Query Distributed Ledger for extracted Watermark ID
+    DB-->>Gate: Match Block #5: Decrypted by @bob on 2026-09-27
+    Gate->>DB: Assemble Cryptographic Proof Bundle (data/proofs/PRF-xxxx.json)
+    Gate-->>Forensic: Attribution Result: Attributed to @bob + Proof Bundle JSON
+    Forensic->>Gate: POST /proof/verify {proof_id: "PRF-xxxx"}
+    Gate->>Gate: Execute 6 Mathematical Verifications (V1 through V6)
+    Gate-->>Forensic: HTTP 200 OK: Court-Grade Certificate (HIGH_CONFIDENCE: 100% Bob)
+```
+
+---
+
 ### 3.1 Document Distribution Flow (`POST /send`)
 
 ```mermaid
@@ -411,6 +477,61 @@ Majority voting over the 24 samples produces extreme resilience against heavy JP
 ## 7. Database Schema & Persistence Layer
 
 The embedded SQLite database (`data/sanket.db`) operates in **WAL (Write-Ahead Logging)** mode with `busy_timeout = 5000ms`, providing ACID durability without write-lock collisions across concurrent LAN requests.
+
+### 7.1 Entity-Relationship (ER) Schema Diagram
+
+```mermaid
+erDiagram
+    USERS ||--o{ DOCUMENTS : "uploads / distributes"
+    DOCUMENTS ||--|{ DOCUMENT_RECIPIENTS : "has_recipients"
+    USERS ||--o{ DOCUMENT_RECIPIENTS : "receives / decrypts"
+    USERS ||--o{ AUDIT_EVENTS : "triggers"
+    DOCUMENTS ||--o{ AUDIT_EVENTS : "associated_with"
+
+    USERS {
+        text user_id PK "Unique user identifier (@alice, @bob)"
+        text name "Full name / display title"
+        text role "Role ('admin', 'user', 'auditor')"
+        text public_key "ML-DSA-65 Dilithium public key (hex, 1952B)"
+        text kem_public_key "ML-KEM-768 Kyber public key (hex, 1184B)"
+        text private_key_path "Path to Dilithium private key (.bin)"
+        text kem_private_key_path "Path to Kyber private key (.bin)"
+        text created_at "ISO-8601 registration timestamp"
+    }
+
+    DOCUMENTS {
+        text document_id PK "Unique document identifier (e.g. doc_8b72e1)"
+        text filename "Original document filename"
+        text sender FK "Sender user_id (references users.user_id)"
+        text recipients "Comma-separated list of recipient user_ids"
+        text encrypted_package_path "Filesystem path to data/encrypted/{pkg_id}/"
+        text package_name "Directory name of the package"
+        integer file_size_bytes "Original file size in bytes"
+        text created_at "ISO-8601 creation timestamp"
+    }
+
+    DOCUMENT_RECIPIENTS {
+        integer id PK "Auto-incrementing surrogate primary key"
+        text document_id FK "Document identifier (references documents.document_id)"
+        text recipient_id FK "Recipient identifier (references users.user_id)"
+        text status "Status flag ('pending' or 'decrypted')"
+        text watermark_id "Assigned 128-bit watermark UUID (hex)"
+        text decrypted_at "ISO-8601 decryption timestamp"
+        integer ledger_block_index "Committed blockchain block index"
+    }
+
+    AUDIT_EVENTS {
+        integer id PK "Auto-incrementing event ID"
+        text timestamp "ISO-8601 event timestamp"
+        text user_id FK "User responsible for action"
+        text action "Action code ('SEND', 'DECRYPT', 'VERIFY', 'LOGIN')"
+        text document_id FK "Associated document identifier (nullable)"
+        text ip_address "Client IP address for audit traceability"
+        text details "Structured JSON event metadata"
+    }
+```
+
+### 7.2 SQL DDL Schema Definition
 
 ```sql
 -- 1. Identity Table

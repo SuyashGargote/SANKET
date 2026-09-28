@@ -39,6 +39,26 @@ $$\mathbf{Distribute} \longrightarrow \mathbf{Authorize} \longrightarrow \mathbf
 
 ---
 
+## Table of Contents
+- [1. System Overview & The Core Problem](#1-system-overview--the-core-problem)
+- [2. High-Level Architecture Block Diagram](#2-high-level-architecture-block-diagram)
+- [3. End-to-End User Interaction Flow & Sequence](#3-end-to-end-user-interaction-flow--sequence)
+- [4. Deep-Dive Cryptographic Encryption Flow & Post-Quantum Key Wrapping](#4-deep-dive-cryptographic-encryption-flow--post-quantum-key-wrapping)
+- [5. Data Retrieval, In-Memory Decryption & Watermarking Flow](#5-data-retrieval-in-memory-decryption--watermarking-flow)
+- [6. Database Architecture & Physical Storage Model](#6-database-architecture--physical-storage-model)
+- [7. Court-Grade "Forensic-Approved" Verification Architecture & Legal Admissibility](#7-court-grade-forensic-approved-verification-architecture--legal-admissibility)
+- [8. Multi-Node P2P Consensus Quorum & Secondary Snapshot Anchors](#8-multi-node-p2p-consensus-quorum--secondary-snapshot-anchors)
+- [9. Technical Specifications & Cryptographic Stack](#9-technical-specifications--cryptographic-stack)
+- [10. Detailed Breakdown of the Three Implementation Phases](#10-detailed-breakdown-of-the-three-implementation-phases)
+- [11. Complete REST API Reference](#11-complete-rest-api-reference)
+- [12. Command Line Interface Reference (`main.py`)](#12-command-line-interface-reference-mainpy)
+- [13. Frontend Workflow Dashboard](#13-frontend-workflow-dashboard)
+- [14. Installation, Execution & Multi-Node Deployment](#14-installation-execution--multi-node-deployment)
+- [15. Automated Test Suites & Benchmarks](#15-automated-test-suites--benchmarks)
+- [16. License & Attribution](#16-license--attribution)
+
+---
+
 ## 2. High-Level Architecture Block Diagram
 
 The entire SANKET platform operates as a clear, four-stage cryptographic pipeline:
@@ -80,49 +100,482 @@ flowchart LR
 
 ---
 
-## 3. Step-by-Step Architecture Flow Diagrams
+## 3. End-to-End User Interaction Flow & Sequence
 
-### Flow 1: Document Distribution (Alice Sends to Bob & Charlie)
+The user experience in SANKET coordinates five distinct roles across the network: **Alice (Sender/Creator)**, **Bob (Recipient/Decrypter)**, the **API Gateway (Node A :8000)**, the **Peer Validator Node (Node B :8001)**, and the **Forensic Investigator / Court Examiner**. 
+
+The sequence below illustrates the complete lifecycle from document distribution to in-RAM watermarking and court-grade forensic attribution:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Alice as Alice (Sender)
+    actor Bob as Bob (Recipient)
+    participant Gate as API Gateway (Node A :8000)
+    participant Peer as Peer Node (Node B :8001)
+    participant DB as SQLite WAL DB & Storage
+    actor Forensic as Forensic Investigator
+
+    Note over Alice,DB: Phase 1: Document Distribution & Key Wrapping
+    Alice->>Gate: POST /auth/login {user_id: "alice"}
+    Gate-->>Alice: Active Session Established (X-User-ID: "alice")
+    Alice->>Gate: POST /send {file, recipients: ["bob", "charlie"]}
+    Gate->>Gate: Generate AES-256-GCM K_doc + IV
+    Gate->>Gate: Wrap K_doc per recipient via ML-KEM-768 Encapsulation
+    Gate->>DB: Write data/encrypted/{pkg_id}/ (payload.enc + metadata.json)
+    Gate->>DB: INSERT INTO documents & document_recipients (status='pending')
+    Gate-->>Alice: HTTP 200 OK: Distribution Receipt {document_id, recipients}
+
+    Note over Bob,DB: Phase 2: Session-Bound In-Memory Decryption & Signing
+    Bob->>Gate: GET /inbox (Header: X-User-ID: "bob")
+    Gate->>DB: Query pending documents where recipient_id = 'bob'
+    Gate-->>Bob: Inbox List (e.g. document_id: "doc_01", status: "pending")
+    Bob->>Gate: POST /decrypt {package_id} (Header: X-User-ID: "bob")
+    Gate->>Gate: RBAC Gatekeeper: Validate 'bob' is authorized & matches session
+    Gate->>DB: Read metadata.json & payload.enc
+    Gate->>Gate: In-RAM ML-KEM-768 Decapsulation -> In-RAM AES-256-GCM Decrypt
+    Gate->>Gate: 2D DCT-QIM Watermarking: Embed Bob ID + Timestamp + Nonce + CRC
+    Gate->>Gate: Orthogonal DC Anti-Clipping compensation on boundary blocks
+    Bob->>Gate: Client-Side Dilithium Signing: Sign canonical decryption payload
+    Gate->>Gate: Gateway Dilithium Signing: Sign block hash
+
+    Note over Gate,Peer: Phase 3: P2P Multi-Node Consensus Quorum
+    Gate->>Peer: POST /ledger/block/sign {candidate_block}
+    Peer->>Peer: Validate Hash Continuity, Bob's Signature, & Gateway Signature
+    Peer->>Peer: Node B Dilithium Signs Block Hash
+    Peer-->>Gate: Return Peer Signature {node_id: "node_B", signature: "..."}
+    Gate->>Gate: Verify Quorum Met (Recipient + Gateway + >=1 Peer)
+    Gate->>DB: Commit Block to Node A (data/ledger/ledger.json)
+    Gate->>Peer: POST /ledger/block/receive {finalized_block}
+    Peer->>Peer: Commit Block to Node B (data/nodes/node_B/ledger/ledger.json)
+    Gate->>DB: UPDATE document_recipients SET status='decrypted', watermark_id=...
+    Gate->>DB: Write watermarked image to data/decrypted/file_bob_xxxx.png
+    Gate-->>Bob: HTTP 200 OK: Decrypted Watermarked Document Display / Download
+
+    Note over Forensic,DB: Phase 4: Forensic Leak Attribution & Court Verification
+    Forensic->>Gate: POST /verify {leaked_image_file}
+    Gate->>Gate: Synchronize Image: Angular search [-5.5°, +5.5°] on Coeff (4,2)
+    Gate->>Gate: Multi-Signal DCT-QIM Extraction (24 votes/bit majority voting)
+    Gate->>Gate: Validate CRC-16 Checksum (Zero bit-flips)
+    Gate->>DB: Query Distributed Ledger for extracted Watermark ID
+    DB-->>Gate: Match Block #5: Decrypted by @bob on 2026-09-27
+    Gate->>DB: Assemble Cryptographic Proof Bundle (data/proofs/PRF-xxxx.json)
+    Gate-->>Forensic: Attribution Result: Attributed to @bob + Proof Bundle JSON
+    Forensic->>Gate: POST /proof/verify {proof_id: "PRF-xxxx"}
+    Gate->>Gate: Execute 6 Mathematical Verifications (V1 through V6)
+    Gate-->>Forensic: HTTP 200 OK: Court-Grade Certificate (HIGH_CONFIDENCE: 100% Bob)
+```
+
+### Operational User Journey:
+1. **Sender Experience (`SendScreen.jsx` / `main.py send`)**:
+   - The user selects a document file (PNG, JPG, BMP) and chooses recipients from the registered directory (`@bob`, `@charlie`).
+   - The system computes the file integrity hash, executes a single AES-256-GCM encryption, encapsulates the document key for each recipient with their respective NIST FIPS 203 **ML-KEM-768** public key, records metadata in SQLite, and provides an immediate distribution receipt.
+2. **Recipient Experience (`InboxScreen.jsx` & `DecryptScreen.jsx` / `main.py decrypt`)**:
+   - The recipient inspects their inbox with real-time access badges.
+   - When triggering decryption, the active session identity (`X-User-ID`) is cryptographically enforced. Decapsulation and decryption occur **strictly in volatile memory**.
+   - Plaintext is dynamically injected with an invisible, robust 2D DCT-QIM watermark carrying the recipient's identity, timestamp, and nonce.
+   - The user's NIST FIPS 204 **ML-DSA-65 (Dilithium)** private key signs the canonical event payload before the file is rendered or downloaded, creating irrevocable non-repudiation.
+3. **Forensic Examiner Experience (`LeakVerifyScreen.jsx` / `main.py verify` & `report`)**:
+   - An investigator uploads any recovered digital copy (even if screenshotted, cropped, rotated, re-compressed with JPEG, or noisy).
+   - The platform auto-corrects angular skew, extracts watermark bits across multiple signal perturbations, checks the CRC-16 polynomial, correlates the watermark with the immutable ledger, compiles a court-grade **Cryptographic Proof Bundle**, and verifies all 6 mathematical gates in real time.
+
+---
+
+## 4. Deep-Dive Cryptographic Encryption Flow & Post-Quantum Key Wrapping
+
+SANKET eliminates the multi-ciphertext storage explosion of traditional secure distribution systems by performing a **single logical payload encryption** paired with **individualized post-quantum key encapsulation**.
 
 ```mermaid
 flowchart TD
-    FILE["Original File (PNG)"] --> ENCR["1. AES-256-GCM Encryption<br/>(Generates random 256-bit Document Key K_doc)"]
-    ENCR --> PAYLOAD["payload.enc<br/>(Single shared encrypted ciphertext)"]
+    subgraph Ingestion ["1. Document Ingestion & Integrity Hashing"]
+        FILE["Original Document (F_raw)"] --> HASH["Compute SHA-256 Digest:<br/>H_file = SHA-256(F_raw)"]
+    end
 
-    K_DOC["Key K_doc"] --> KEM1["2. Wrap for Bob<br/>ML-KEM-768 Encapsulation with Bob's Public Key"]
-    K_DOC --> KEM2["3. Wrap for Charlie<br/>ML-KEM-768 Encapsulation with Charlie's Public Key"]
+    subgraph SymmetricCipher ["2. Single Logical Symmetric Encryption"]
+        CSPRNG["Cryptographic RNG (os.urandom)"] --> K_DOC["Ephemeral Document Key<br/>K_doc in {0,1}^256"]
+        CSPRNG --> IV["Random 96-bit IV<br/>IV in {0,1}^96"]
+        HASH --> GCM["AES-256-GCM Encryption Engine<br/>Authenticated with AAD = H_file"]
+        K_DOC --> GCM
+        IV --> GCM
+        FILE --> GCM
+        GCM --> CIPHER["Encrypted Payload (payload.enc)<br/>Ciphertext C_payload + 128-bit Auth Tag T_gcm"]
+    end
 
-    KEM1 --> META["metadata.json<br/>(Contains wrapped keys for each recipient)"]
-    KEM2 --> META
+    subgraph PQ_Encapsulation ["3. Multi-Recipient Post-Quantum Key Encapsulation"]
+        direction TB
+        K_DOC --> WRAP_BOB["Recipient: Bob<br/>• NIST FIPS 203 ML-KEM-768 Encapsulation<br/>• (c_bob, ss_bob) = ML-KEM-768.Encaps(PK_bob)<br/>• wrapped_key_bob = AES-KeyWrap(ss_bob, K_doc)"]
+        K_DOC --> WRAP_CHARLIE["Recipient: Charlie<br/>• NIST FIPS 203 ML-KEM-768 Encapsulation<br/>• (c_charlie, ss_charlie) = ML-KEM-768.Encaps(PK_charlie)<br/>• wrapped_key_charlie = AES-KeyWrap(ss_charlie, K_doc)"]
+        K_DOC --> FALLBACK["Dual-Stack Backwards-Compatible Fallback:<br/>X25519 Diffie-Hellman + HKDF-SHA256 Key Wrap"]
+    end
 
-    PAYLOAD --> PKG["data/encrypted/{pkg_id}/<br/>(Encrypted Package Folder)"]
-    META --> PKG
-    PKG --> SQLITE["SQLite Database (data/sanket.db)<br/>Records document_id, sender, recipients, status='pending'"]
+    subgraph Packaging ["4. Physical Packaging & Relational Persistence"]
+        CIPHER --> PKG_DIR["data/encrypted/{pkg_id}/<br/>├── payload.enc<br/>└── metadata.json"]
+        WRAP_BOB --> META["metadata.json<br/>{package_id, iv, tag, file_hash, wrapped_keys}"]
+        WRAP_CHARLIE --> META
+        FALLBACK --> META
+        META --> PKG_DIR
+        PKG_DIR --> DB_DOC[("SQLite: documents table<br/>document_id, filename, sender, package_path")]
+        PKG_DIR --> DB_REC[("SQLite: document_recipients table<br/>recipient_id, status='pending'")]
+    end
+```
+
+### Mathematical Formulation of Encryption:
+1. **Document Digest**:
+   $$H_{\text{file}} = \text{SHA-256}(F_{\text{raw}}) \in \{0, 1\}^{256}$$
+2. **Ephemeral Key & IV Generation**:
+   $$K_{\text{doc}} \stackrel{R}{\leftarrow} \{0, 1\}^{256}, \quad \text{IV} \stackrel{R}{\leftarrow} \{0, 1\}^{96}$$
+3. **Authenticated Payload Encryption**:
+   $$(C_{\text{payload}}, T_{\text{gcm}}) = \mathbf{AES\text{-}256\text{-}GCM\text{-}Encrypt}(K_{\text{doc}}, \text{IV}, F_{\text{raw}}, \text{AAD}=H_{\text{file}})$$
+   - The document hash $H_{\text{file}}$ is bound as Additional Authenticated Data (AAD), ensuring the ciphertext cannot be transplanted into a different document metadata context.
+4. **Post-Quantum Key Encapsulation (ML-KEM-768 / Kyber)**:
+   For each recipient $R_i$ with public encapsulation key $PK_{R_i}^{\text{KEM}}$ (1,184 bytes):
+   $$(C_{\text{KEM}, i}, SS_i) = \mathbf{ML\text{-}KEM\text{-}768.Encaps}(PK_{R_i}^{\text{KEM}})$$
+   $$\text{WrappedKey}_i = \mathbf{AES\text{-}KeyWrap}(SS_i, K_{\text{doc}})$$
+   - Ciphertext size: 1,088 bytes per recipient.
+   - Decapsulation shared secret size: 32 bytes ($256$ bits).
+5. **Dual-Stack Fallback (RFC 7748 X25519)**:
+   For legacy or non-quantum clients, an ephemeral X25519 scalar multiplication is executed:
+   $$(C_{\text{X25519}, i}, SS_{\text{X25519}, i}) = \mathbf{X25519}(sk_{\text{eph}}, PK_{R_i}^{\text{X25519}})$$
+   $$\text{FallbackKey}_i = \mathbf{AES\text{-}KeyWrap}(\mathbf{HKDF\text{-}SHA256}(SS_{\text{X25519}, i}), K_{\text{doc}})$$
+
+### Package Metadata Structure (`data/encrypted/{pkg_id}/metadata.json`):
+```json
+{
+  "package_id": "pkg_8b72e19a4f20",
+  "original_filename": "classified_intel.png",
+  "file_hash": "66ed6ed129e81faf67d4be3ed2349ceb2bdf4b6cf330bfc703720a6c4c3a89b6",
+  "algorithm": "AES-256-GCM",
+  "iv": "9f2b84e1208d17a35c910284",
+  "tag": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+  "sender": "alice",
+  "recipients": ["bob", "charlie"],
+  "wrapped_keys": {
+    "bob": {
+      "kem": "ml-kem-768",
+      "ciphertext": "038a4f91b7...",
+      "wrapped_key": "4c89df12..."
+    },
+    "charlie": {
+      "kem": "ml-kem-768",
+      "ciphertext": "99ea01bc52...",
+      "wrapped_key": "1290fe34..."
+    }
+  },
+  "created_at": "2026-09-28T14:15:22.901Z"
+}
 ```
 
 ---
 
-### Flow 2: In-Memory Decryption & User Signing (Bob Decrypts)
+## 5. Data Retrieval, In-Memory Decryption & Watermarking Flow
+
+When an authorized user requests decryption, SANKET guarantees that **unwatermarked plaintext is never written to disk**. Decryption, forensic watermarking, anti-clipping protection, and digital signing are executed atomically in volatile memory before storage or delivery.
 
 ```mermaid
 flowchart TD
-    REQ["Bob Requests Decryption<br/>POST /decrypt (Header: X-User-ID: 'bob')"] --> GATE{"Authorization Check:<br/>1. Is Bob an authorized recipient?<br/>2. Does session match 'bob'?"}
+    subgraph AuthGate ["1. Session-Bound Authorization Gatekeeper"]
+        REQ["Bob Requests Decryption<br/>POST /decrypt (Header: X-User-ID: 'bob')"] --> GATE{"Authorization Check:<br/>1. Is 'bob' in document recipients?<br/>2. Does active session match 'bob'?"}
+        GATE -->|"Unauthorized"| FORBIDDEN["HTTP 403 Forbidden<br/>(Access Denied)"]
+    end
 
-    GATE -->|"No"| REJECT["HTTP 403 Forbidden<br/>(Access Denied)"]
-    GATE -->|"Yes"| UNWRAP["ML-KEM-768 Decapsulation<br/>(Bob's Private Key unwraps K_doc)"]
+    subgraph RAM_Decryption ["2. In-Memory Post-Quantum Decapsulation & Plaintext Recovery"]
+        GATE -->|"Authorized"| FETCH["Read metadata.json & payload.enc<br/>from data/encrypted/{pkg_id}/"]
+        FETCH --> KEM_DECAPS["ML-KEM-768 Decapsulation (RAM Only):<br/>• Load Bob's private key SK_bob (2,400B)<br/>• ss_bob = ML-KEM-768.Decaps(SK_bob, c_bob)<br/>• K_doc = AES-KeyUnwrap(ss_bob, wrapped_key_bob)"]
+        KEM_DECAPS --> GCM_DECRYPT["AES-256-GCM Authenticated Decryption (RAM Only):<br/>• Plaintext F_raw = AES-GCM-Decrypt(K_doc, IV, C_payload, Tag)<br/>• Verify SHA-256(F_raw) == H_file"]
+        GCM_DECRYPT --> ZERO_DISK["ZERO PLAINTEXT DISK WRITES<br/>Raw plaintext exists strictly in volatile RAM buffers"]
+    end
 
-    UNWRAP --> RAM["In-Memory Plaintext Recovery<br/>(Zero disk writes of raw plaintext)"]
-    RAM --> WM["2D DCT-QIM Watermarking Embedder<br/>• Mid-frequency coeffs: (2,2), (3,1), (1,3), (2,3)<br/>• Dedicated (4,2) Sync Template<br/>• Orthogonal DC Anti-Clipping Protection"]
+    subgraph WatermarkEngine ["3. In-Memory 2D DCT-QIM Watermarking & Anti-Clipping"]
+        ZERO_DISK --> YCBCR["Convert RGB to YCbCr (Extract Y Luminance Channel)"]
+        YCBCR --> BLOCKS["Partition Luminance into 8x8 Spatial Blocks & Apply 2D DCT"]
+        BLOCKS --> PAYLOAD_GEN["Generate Unique 144-Bit Watermark Payload:<br/>128-bit Watermark ID (UUID4) || 16-bit CRC-16 Checksum"]
+        PAYLOAD_GEN --> QIM["Adaptive Quantization Index Modulation (QIM):<br/>Embed bits in mid-frequencies (2,2), (3,1), (1,3), (2,3)<br/>Step size delta in [38.0, 62.0] scaled to block variance"]
+        QIM --> SYNC_TEMP["Inject Periodic Synchronization Pattern:<br/>Coefficient (4,2) with fixed delta_sync = 80.0"]
+        SYNC_TEMP --> ANTI_CLIP["Orthogonal DC Anti-Clipping Compensation:<br/>Shift DC coefficient (0,0) by +/- delta*8.0 on boundary blocks<br/>(Completely prevents 0/255 clipping without altering AC watermark)"]
+        ANTI_CLIP --> IDCT["Apply 2D Inverse DCT -> Watermarked Plaintext F_wm"]
+    end
 
-    WM --> RECORD["Assemble Decryption Event Payload:<br/>• watermark_id • user_id • timestamp<br/>• file_hash • decrypted_hash"]
+    subgraph SigningConsensus ["4. User-Side Dilithium Signing & Multi-Node Ledger Commit"]
+        IDCT --> HASH_WM["Compute Output Digest:<br/>H_decrypted = SHA-256(F_wm)"]
+        HASH_WM --> EVENT["Assemble Canonical Decryption Event Record:<br/>{watermark_id, user_id, timestamp, file_hash, decrypted_hash}"]
+        EVENT --> BOB_SIGN["Enforce User-Side Post-Quantum Signature:<br/>sigma_recipient = ML-DSA-65.Sign(SK_bob, Canonical_Event)"]
+        BOB_SIGN --> P2P["P2P Multi-Node Consensus Quorum:<br/>• System Authority Signs Block Hash<br/>• Peer Node B Validates & Signs Block Hash"]
+        P2P --> LEDGER_COMMIT[("Commit Block to Independent Node Ledgers<br/>• Node A: data/ledger/ledger.json<br/>• Node B: data/nodes/node_B/ledger/ledger.json")]
+        LEDGER_COMMIT --> DB_UPDATE[("Update SQLite document_recipients:<br/>status='decrypted', watermark_id, ledger_block_index")]
+        DB_UPDATE --> SAVE_IMG["Persist Watermarked Output Image:<br/>data/decrypted/file_bob_timestamp.png"]
+    end
+```
 
-    RECORD --> BOB_SIGN["User-Side Signing Enforcement:<br/>Bob signs payload with own ML-DSA-65 Dilithium Key"]
-    BOB_SIGN --> OUT["Save Watermarked Output Image<br/>data/decrypted/file_bob_xxxx.png"]
+### Detailed Decryption Stages:
+1. **RBAC Authorization & Session Binding**:
+   - Decryption requires the `X-User-ID` HTTP header matching the authorized identity.
+   - Attempting to decrypt another user's assigned document raises an immediate `HTTP 403 Forbidden` error and logs an `UNAUTHORIZED_ACCESS` audit event.
+2. **In-Memory ML-KEM-768 Decapsulation**:
+   - The system retrieves $C_{\text{KEM}, \text{bob}}$ from `metadata.json`.
+   - Bob's private key $SK_{\text{bob}}^{\text{KEM}}$ (2,400 bytes, loaded from `data/keys/bob/kyber_private.bin`) executes:
+     $$SS_{\text{bob}} = \mathbf{ML\text{-}KEM\text{-}768.Decaps}(SK_{\text{bob}}^{\text{KEM}}, C_{\text{KEM}, \text{bob}})$$
+     $$K_{\text{doc}} = \mathbf{AES\text{-}KeyUnwrap}(SS_{\text{bob}}, \text{WrappedKey}_{\text{bob}})$$
+3. **In-Memory Authenticated AES-GCM Plaintext Recovery**:
+   - $F_{\text{raw}} = \mathbf{AES\text{-}256\text{-}GCM\text{-}Decrypt}(K_{\text{doc}}, \text{IV}, C_{\text{payload}}, T_{\text{gcm}}, \text{AAD}=H_{\text{file}})$.
+   - $\text{SHA-256}(F_{\text{raw}})$ is verified against $H_{\text{file}}$ in `metadata.json`.
+   - **Crucial Invariant**: $F_{\text{raw}}$ is never flushed to filesystem, temp files, or swap storage.
+4. **2D DCT-QIM Watermarking & Anti-Clipping**:
+   - Plaintext pixels are converted to YCbCr; the luminance $Y$ channel is divided into $8 \times 8$ blocks.
+   - Watermark bits are embedded into mid-frequency coefficients `(2,2), (3,1), (1,3), (2,3)` using adaptive quantization index modulation ($\Delta \in [38.0, 62.0]$).
+   - Synchronization pattern is embedded into coefficient `(4,2)` ($\Delta_{\text{sync}} = 80.0$).
+   - **Orthogonal DC Anti-Clipping**: When high-contrast regions (e.g. pure white `#FFFFFF` document backgrounds) cause IDCT values to exceed $255.0$ or fall below $0.0$, the DC coefficient `(0,0)` is shifted by $\mp (\text{overflow}) \times 8.0$. Because DC is orthogonal to all AC frequencies, spatial clipping is eliminated while watermarking and sync patterns remain 100% intact.
+5. **Mandatory Recipient Dilithium Signing (Non-Repudiation)**:
+   - The canonical event payload is assembled:
+     $$\mathcal{E} = \{\text{watermark\_id}, \text{user\_id}, \text{timestamp}, H_{\text{file}}, H_{\text{decrypted}}\}$$
+   - Bob's private key $SK_{\text{bob}}^{\text{DSA}}$ (4,032 bytes) signs the event:
+     $$\sigma_{\text{recipient}} = \mathbf{ML\text{-}DSA\text{-}65.Sign}(SK_{\text{bob}}^{\text{DSA}}, \text{canonical\_json}(\mathcal{E}))$$
+6. **Consensus Quorum & Output Persistence**:
+   - The decryption event is packaged into a candidate block and submitted to peer nodes for consensus quorum.
+   - Once committed across node ledgers, the watermarked output image is saved to `data/decrypted/file_bob_{timestamp}.png` and delivered to the recipient.
+
+---
+
+## 6. Database Architecture & Physical Storage Model
+
+SANKET employs an embedded, high-performance relational database engine based on **SQLite3 in WAL (Write-Ahead Logging) mode**, coupled with an organized, air-gapped file storage structure.
+
+### 6.1 Entity-Relationship (ER) Schema Diagram
+
+```mermaid
+erDiagram
+    USERS ||--o{ DOCUMENTS : "uploads / distributes"
+    DOCUMENTS ||--|{ DOCUMENT_RECIPIENTS : "has_recipients"
+    USERS ||--o{ DOCUMENT_RECIPIENTS : "receives / decrypts"
+    USERS ||--o{ AUDIT_EVENTS : "triggers"
+    DOCUMENTS ||--o{ AUDIT_EVENTS : "associated_with"
+
+    USERS {
+        text user_id PK "Unique user identifier (@alice, @bob)"
+        text name "Full name / display title"
+        text role "Role ('admin', 'user', 'auditor')"
+        text public_key "ML-DSA-65 Dilithium public key (hex, 1952B)"
+        text kem_public_key "ML-KEM-768 Kyber public key (hex, 1184B)"
+        text private_key_path "Path to Dilithium private key (.bin)"
+        text kem_private_key_path "Path to Kyber private key (.bin)"
+        text created_at "ISO-8601 registration timestamp"
+    }
+
+    DOCUMENTS {
+        text document_id PK "Unique document identifier (e.g. doc_8b72e1)"
+        text filename "Original document filename"
+        text sender FK "Sender user_id (references users.user_id)"
+        text recipients "Comma-separated list of recipient user_ids"
+        text encrypted_package_path "Filesystem path to data/encrypted/{pkg_id}/"
+        text package_name "Directory name of the package"
+        integer file_size_bytes "Original file size in bytes"
+        text created_at "ISO-8601 creation timestamp"
+    }
+
+    DOCUMENT_RECIPIENTS {
+        integer id PK "Auto-incrementing surrogate primary key"
+        text document_id FK "Document identifier (references documents.document_id)"
+        text recipient_id FK "Recipient identifier (references users.user_id)"
+        text status "Status flag ('pending' or 'decrypted')"
+        text watermark_id "Assigned 128-bit watermark UUID (hex)"
+        text decrypted_at "ISO-8601 decryption timestamp"
+        integer ledger_block_index "Committed blockchain block index"
+    }
+
+    AUDIT_EVENTS {
+        integer id PK "Auto-incrementing event ID"
+        text timestamp "ISO-8601 event timestamp"
+        text user_id FK "User responsible for action"
+        text action "Action code ('SEND', 'DECRYPT', 'VERIFY', 'LOGIN')"
+        text document_id FK "Associated document identifier (nullable)"
+        text ip_address "Client IP address for audit traceability"
+        text details "Structured JSON event metadata"
+    }
+```
+
+### 6.2 SQL Table Definitions & Integrity Constraints
+
+```sql
+-- 1. Identity & PQC Keystore Registry
+CREATE TABLE IF NOT EXISTS users (
+    user_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL,
+    public_key TEXT,
+    kem_public_key TEXT,
+    private_key_path TEXT,
+    kem_private_key_path TEXT,
+    created_at TEXT NOT NULL
+);
+
+-- 2. Distributed Document Registry
+CREATE TABLE IF NOT EXISTS documents (
+    document_id TEXT PRIMARY KEY,
+    filename TEXT NOT NULL,
+    sender TEXT NOT NULL,
+    recipients TEXT NOT NULL,
+    encrypted_package_path TEXT NOT NULL,
+    package_name TEXT NOT NULL,
+    file_size_bytes INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+-- 3. Recipient Decryption Status & Watermark Association
+CREATE TABLE IF NOT EXISTS document_recipients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id TEXT NOT NULL,
+    recipient_id TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',
+    watermark_id TEXT,
+    decrypted_at TEXT,
+    ledger_block_index INTEGER,
+    FOREIGN KEY(document_id) REFERENCES documents(document_id) ON DELETE CASCADE,
+    UNIQUE(document_id, recipient_id)
+);
+
+-- 4. Immutable Audit Trail
+CREATE TABLE IF NOT EXISTS audit_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    user_id TEXT,
+    action TEXT NOT NULL,
+    document_id TEXT,
+    ip_address TEXT,
+    details TEXT
+);
+
+-- Performance Indices
+CREATE INDEX IF NOT EXISTS idx_doc_sender ON documents(sender);
+CREATE INDEX IF NOT EXISTS idx_doc_recipients ON document_recipients(recipient_id);
+```
+
+### 6.3 Concurrency & High-Availability Architecture:
+- **Write-Ahead Logging (WAL)**: Configured via `PRAGMA journal_mode = WAL;`. Readers and writers proceed concurrently without mutual blocking.
+- **Busy Timeout**: Configured via `PRAGMA busy_timeout = 5000;`. Concurrent requests on LAN multi-node clusters wait up to 5 seconds for write locks rather than throwing SQLite busy exceptions.
+- **Foreign Key Enforcement**: Configured via `PRAGMA foreign_keys = ON;`. Cascading deletes protect against orphaned recipient or audit records.
+
+### 6.4 Relational Database to Physical Storage Mapping
+
+| Database Entity / Column | Physical Filesystem Location | Contents & Security Guarantee |
+| :--- | :--- | :--- |
+| **`data/sanket.db`** | `data/sanket.db`, `sanket.db-wal`, `sanket.db-shm` | Embedded ACID relational metadata store in WAL mode |
+| **`documents.encrypted_package_path`** | `data/encrypted/{pkg_id}/` | Contains `payload.enc` (AES-256-GCM ciphertext) and `metadata.json` (Kyber wrapped keys) |
+| **`document_recipients.watermark_id`** | `data/decrypted/file_{user}_{ts}.png` | Watermarked decrypted images carrying 2D DCT-QIM watermark & sync template |
+| **`users.private_key_path`** | `data/keys/{user_id}/dilithium_private.bin` | NIST FIPS 204 ML-DSA-65 private signing key (4,032 bytes, 0600 permissions) |
+| **`users.kem_private_key_path`** | `data/keys/{user_id}/kyber_private.bin` | NIST FIPS 203 ML-KEM-768 private decapsulation key (2,400 bytes, 0600 permissions) |
+| **`document_recipients.ledger_block_index`** | `data/ledger/ledger.json` | Node A append-only blockchain with multi-party Dilithium signatures |
+| **Peer Node Isolated Ledger** | `data/nodes/node_B/ledger/ledger.json` | Node B independent physical ledger storage (zero shared directories) |
+| **Periodic State Checkpoints** | `data/ledger/anchors.json` | Cumulative snapshot state anchors computed every 5 blocks |
+| **Cryptographic Proofs** | `data/proofs/PRF-{proof_id}.json` | Self-contained court-grade cryptographic proof bundles |
+| **Distortion Analysis Reports** | `data/reports/REP-{report_id}.json` | Forensic tamper analysis reports with classified distortion metrics |
+
+---
+
+## 7. Court-Grade "Forensic-Approved" Verification Architecture & Legal Admissibility
+
+SANKET is engineered to produce digital evidence that satisfies the most stringent global legal and forensic standards for digital admissibility:
+- **ISO/IEC 27037:2012**: International standard for identification, collection, acquisition, and preservation of digital evidence.
+- **Section 65B, Indian Evidence Act (IEA)**: Automated generation of certified electronic records verifying computer system integrity, continuous operation, and lack of human tampering.
+- **Federal Rules of Evidence (FRE) Rule 902(13) & 902(14)**: Self-authenticating electronic records generated by a certified cryptographic process that produces an accurate result.
+
+```mermaid
+flowchart TD
+    subgraph EvidenceAcquisition ["1. Digital Evidence Ingestion & Geometric Skew Correction"]
+        LEAK["Leaked Image Artifact<br/>(Scanned, Photographed, Compressed)"] --> SKEW_SEARCH["Angular Cross-Correlation Peak Search:<br/>Scans [-5.5°, +5.5°] in 0.5° increments over Coeff (4,2)"]
+        SKEW_SEARCH --> DESKEW["Bilinear Interpolation De-skewing:<br/>Rotates image back to canonical Cartesian axis"]
+    end
+
+    subgraph ExtractionEngine ["2. Multi-Signal Robust Extraction Engine"]
+        DESKEW --> CHAN_ORIG["Channel 1: Canonical De-skewed Luminance"]
+        DESKEW --> CHAN_BLUR["Channel 2: Gaussian Perturbation Filter (sigma=0.5)"]
+        DESKEW --> CHAN_JPEG["Channel 3: In-Memory JPEG Q85 Re-compression Filter"]
+        CHAN_ORIG & CHAN_BLUR & CHAN_JPEG --> DCT_DECODE["2D DCT Block Decoding over Coeffs (2,2), (3,1), (1,3), (2,3)"]
+        DCT_DECODE --> VOTE["24 Votes/Bit Majority Voting Engine<br/>(4 coeffs x 2 spatial zones x 3 macro-copies)"]
+        VOTE --> CRC_CHECK{"CRC-16 Polynomial Check:<br/>CRC16(Recovered_ID) == Checksum?"}
+        CRC_CHECK -->|"Checksum Failed"| REJECT_TAMPER["INTEGRITY BREACH DETECTED<br/>Image payload damaged, forged, or missing"]
+    end
+
+    subgraph LedgerCorrelation ["3. Multi-Node Distributed Ledger Correlation"]
+        CRC_CHECK -->|"Checksum Passed"| WM_ID["Validated 128-bit Watermark ID"]
+        WM_ID --> QUERY["Query Distributed Ledger Blocks<br/>(Exact Match or Hamming Distance <= 4 bits)"]
+        QUERY --> BLOCK_MATCH["Block Found: Block #5<br/>• Recipient: @bob<br/>• Timestamp: 2026-09-27T15:33:50Z<br/>• Block Hash: cb104928..."]
+        BLOCK_MATCH --> BUNDLE_GEN["Compile Cryptographic Proof Bundle (PRF-xxxx.json)<br/>Binds forensic evidence + ledger block + PQC signatures"]
+    end
+
+    subgraph SixGateVerification ["4. Cryptographic Proof Engine: 6-Gate Strict Verification"]
+        BUNDLE_GEN --> V1["V1: Watermark CRC Integrity (Zero Bit Flips)"]
+        BUNDLE_GEN --> V2["V2: Original Encrypted File Hash Match (SHA-256)"]
+        BUNDLE_GEN --> V3["V3: Decrypted Output Image Hash Match (SHA-256)"]
+        BUNDLE_GEN --> V4["V4: Distributed Hash Chain Linkage & Continuity"]
+        BUNDLE_GEN --> V5["V5: Cumulative Secondary Snapshot Anchor Match"]
+        BUNDLE_GEN --> V6["V6: Multi-Party Post-Quantum Signature Quorum<br/>(Bob Dilithium + Gateway Dilithium + Node B Dilithium)"]
+
+        V1 & V2 & V3 & V4 & V5 & V6 --> COURT["COURT-GRADE FORENSIC CERTIFICATE:<br/>Status: VERIFIED_HIGH_CONFIDENCE (100% Attribution to @bob)<br/>Legal Admissibility: ISO/IEC 27037 & IEA Sec 65B Compliant"]
+    end
+```
+
+### The 6-Gate Mathematical Proof Engine (`verify_proof_bundle`):
+
+Every generated Proof Bundle must satisfy six sequential mathematical assertions:
+
+1. **Gate $V_1$ — Watermark CRC Integrity**:
+   $$\text{CRC-16-CCITT}(W_{\text{id}}) \equiv C_{\text{crc}} \pmod{2^{16}}$$
+   Guarantees that the recovered 128-bit watermark identity has suffered zero undetected bit-flips during extraction.
+2. **Gate $V_2$ — Original Encrypted File Hash Consistency**:
+   $$\text{len}(H_{\text{file}}) = 64 \land H_{\text{file}} \in \{0\text{-}9, \text{a-f}\}^{64} \land H_{\text{file}} == \text{Package}.\text{file\_hash}$$
+   Verifies that the evidence is tied to the exact original file distributed across the network.
+3. **Gate $V_3$ — Decrypted Output Image Hash Consistency**:
+   $$\text{len}(H_{\text{decrypted}}) = 64 \land H_{\text{decrypted}} == \text{Event}.\text{decrypted\_hash}$$
+   Cryptographically confirms that the watermarked file created during the decryption event matches the ledger record.
+4. **Gate $V_4$ — Distributed Hash Chain Continuity & Genesis Validation**:
+   $$\text{Block}[k].\text{prev\_hash} == \text{Block}[k-1].\text{block\_hash}, \quad \text{Block}[0].\text{prev\_hash} == 0^{64}$$
+   Validates uninterrupted hash chain continuity against the local immutable distributed ledger.
+5. **Gate $V_5$ — Secondary Cumulative Snapshot Anchor Verification**:
+   $$\text{Anchor}_m == \text{SHA-256}\left(\text{Canonical}\left(\bigcup_{i=0}^{5m-1} \text{Block}_i\right)\right)$$
+   Guarantees that the blockchain has not undergone history rewriting or deep state fork tampering.
+6. **Gate $V_6$ — Multi-Party Post-Quantum Non-Repudiation Quorum**:
+   $$\mathbf{Verify}_{\text{Dilithium}}(PK_{\text{recipient}}^{\text{DSA}}, \mathcal{E}, \sigma_{\text{recipient}}) = \text{True}$$
+   $$\mathbf{Verify}_{\text{Dilithium}}(PK_{\text{gateway}}^{\text{DSA}}, H_{\text{block}}, \sigma_{\text{gateway}}) = \text{True}$$
+   $$\exists p \in \text{Peers} : \mathbf{Verify}_{\text{Dilithium}}(PK_p^{\text{DSA}}, H_{\text{block}}, \sigma_p) = \text{True}$$
+   Irrefutably proves under quantum-resistant digital signatures that the recipient signed the decryption event, the gateway attested to it, and a peer node consensus validator witnessed it.
+
+### Forensic Certificate Structure (`PRF-xxxx.json`):
+```json
+{
+  "proof_id": "PRF-f0402966c4a7",
+  "generated_at": "2026-09-28T14:30:10.128Z",
+  "attributed_user": "bob",
+  "confidence_score": 100.0,
+  "verdict": "VERIFIED_HIGH_CONFIDENCE",
+  "forensic_watermark": {
+    "watermark_id": "f0402966c4a79cc2ca98e4c67014b474",
+    "crc_valid": true,
+    "majority_votes_per_bit": 24,
+    "angular_skew_corrected_deg": 1.5
+  },
+  "blockchain_evidence": {
+    "block_index": 5,
+    "block_hash": "cb104928ac8129480bcde1234918237490182347102934812034981203498123",
+    "prev_hash": "8f3b2591a38402db399b1ef0598823f66c1b3f9dc3cf200921434c76063ad46c",
+    "cumulative_anchor": "5d2f8319a9240bc1284ae9876543210fedcba9876543210fedcba9876543210f"
+  },
+  "cryptographic_signatures": {
+    "recipient_dilithium": "07eae737e8398dbcba1c9edb1934a6...",
+    "gateway_dilithium": "466b94df39802a78c3855a20c21914...",
+    "peer_validator_dilithium": "eb4854d03888bd63af2544254e030..."
+  },
+  "legal_certification": {
+    "standard": "ISO/IEC 27037 & IEA Section 65B",
+    "admissibility": "COURT_SUBMISSIBLE",
+    "tamper_detected": false
+  }
+}
 ```
 
 ---
 
-### Flow 3: Multi-Node P2P Consensus Quorum (Real Distributed Network)
+## 8. Multi-Node P2P Consensus Quorum & Secondary Snapshot Anchors
+
+SANKET runs as a true multi-node distributed network where each validator node maintains independent physical storage on disk with **zero shared directories**.
 
 ```mermaid
 flowchart LR
@@ -151,40 +604,18 @@ flowchart LR
     STEP5 -->|"Append"| COMMIT_B
 ```
 
----
+### Consensus Quorum Rule:
+$$\text{BlockAccepted}(B) \iff \text{Valid}(S_{\text{recipient}}) \land \text{Valid}(S_{\text{gateway}}) \land \exists p \in \text{Peers}: \text{Valid}(S_p)$$
+A block is only accepted if it carries three distinct, valid Dilithium signatures: the recipient's signature over the decryption event, the system gateway's signature over the block hash, and at least one peer validator node's signature over the block hash.
 
-### Flow 4: Forensic Leak Verification & Cryptographic Proof Verification
-
-```mermaid
-flowchart TD
-    subgraph Extraction ["1. Forensic Extraction Engine"]
-        LEAK["Leaked Image File"] --> SYNC["(4,2) Sync Template Correlation<br/>Detects rotation skew (-5.5° to +5.5°)"]
-        SYNC --> ROT["Auto-Rotate Image to Canonical Axis"]
-        ROT --> MULTI["Multi-Signal DCT-QIM Extractor<br/>(Original + Blurred + JPEG Q85)"]
-        MULTI --> VOTE["24 Votes/Bit Majority Vote<br/>+ CRC-16 Checksum Verification"]
-    end
-
-    subgraph Attribution ["2. Ledger Query & Correlation"]
-        VOTE --> QUERY["Query Distributed Ledger<br/>(Exact Match or Hamming Distance <= 4 bits)"]
-        QUERY --> MATCH["Block Matched in Blockchain<br/>Decrypted by @bob on 2026-09-27"]
-        MATCH --> GEN_PROOF["Generate Cryptographic Proof Bundle<br/>data/proofs/PRF-xxxx.json"]
-    end
-
-    subgraph Verification ["3. Cryptographic Proof Engine (POST /proof/verify)"]
-        GEN_PROOF --> V1["V1: Watermark CRC Valid"]
-        GEN_PROOF --> V2["V2: File Hash Valid (64 hex)"]
-        GEN_PROOF --> V3["V3: Decrypted Output Hash Valid"]
-        GEN_PROOF --> V4["V4: Hash Chain Linkage & Continuity"]
-        GEN_PROOF --> V5["V5: Secondary Snapshot Anchor Valid"]
-        GEN_PROOF --> V6["V6: Multi-Party PQC Signatures Valid<br/>(Bob + Gateway + Node B)"]
-
-        V1 & V2 & V3 & V4 & V5 & V6 --> COURT["COURT-GRADE FORENSIC VERDICT:<br/>HIGH_CONFIDENCE (100% Attributed to Bob)"]
-    end
-```
+### Secondary Cumulative Anchors:
+Every 5 blocks (`ANCHOR_INTERVAL = 5`), each node computes a cumulative snapshot anchor:
+$$\text{Anchor}_m = \text{SHA256}(\text{canonical}(B_0, B_1, \dots, B_{5m-1}))$$
+Nodes compare cumulative anchors across peers via `GET /ledger/sync`. Any discrepancy immediately isolates the tampering node and marks the ledger status as **`COMPROMISED`**.
 
 ---
 
-## 4. Technical Specifications & Cryptographic Stack
+## 9. Technical Specifications & Cryptographic Stack
 
 | Component | Standard / Technology | Implementation Details |
 | :--- | :--- | :--- |
@@ -206,7 +637,7 @@ flowchart TD
 
 ---
 
-## 5. Detailed Breakdown of the Three Implementation Phases
+## 10. Detailed Breakdown of the Three Implementation Phases
 
 ### Phase 1: Cryptographic Proof Bundle Architecture
 
@@ -312,7 +743,7 @@ Implemented in [`modules/crypto/signature.py`](file:///d:/SIH/ps237/modules/cryp
 
 ---
 
-## 6. Complete REST API Reference
+## 11. Complete REST API Reference
 
 | Endpoint | Method | Description | Security / Headers |
 | :--- | :--- | :--- | :--- |
@@ -357,7 +788,7 @@ Implemented in [`modules/crypto/signature.py`](file:///d:/SIH/ps237/modules/cryp
 
 ---
 
-## 7. Command Line Interface Reference (`main.py`)
+## 12. Command Line Interface Reference (`main.py`)
 
 The unified CLI provides 100% offline operational capabilities:
 
@@ -392,7 +823,7 @@ python main.py demo
 
 ---
 
-## 8. Frontend Workflow Dashboard
+## 13. Frontend Workflow Dashboard
 
 The frontend application ([`frontend/src/`](file:///d:/SIH/ps237/frontend/src/)) provides a modern, responsive glassmorphic dashboard:
 
@@ -406,7 +837,7 @@ The frontend application ([`frontend/src/`](file:///d:/SIH/ps237/frontend/src/))
 
 ---
 
-## 9. Installation, Execution & Multi-Node Deployment
+## 14. Installation, Execution & Multi-Node Deployment
 
 ### Prerequisites
 - Python 3.11+ or 3.12+ (64-bit)
@@ -468,7 +899,7 @@ Any decryption performed on Node A automatically sends candidate blocks to Node 
 
 ---
 
-## 10. Automated Test Suites & Benchmarks
+## 15. Automated Test Suites & Benchmarks
 
 ### 1. Run Complete PQC, Proof Bundle & Multi-Node Unit Tests (17/17 Passing)
 ```bash
@@ -504,7 +935,7 @@ npm run build
 
 ---
 
-## 11. License & Attribution
+## 16. License & Attribution
 
 Developed for the **Smart India Hackathon (SIH)** under **Problem Statement PS237**.  
 Built with NIST-standardized Post-Quantum Cryptography algorithms (`ML-KEM-768`, `ML-DSA-65`).
